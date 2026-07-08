@@ -1,9 +1,9 @@
 import os
+import re
 import subprocess
 import sys
-import time
 from typing import Dict
-from config import WORKSPACE_DIR
+
 from bob_core.file_manager import safe_path
 
 RUNNING_PROCESSES = {}
@@ -13,7 +13,16 @@ def _safe_key(project: str, rel_path: str) -> str:
     return f"{project}:{rel_path}"
 
 
-def run_python(project: str, rel_path: str) -> Dict:
+def run_python(project: str, rel_path: str, timeout: int = 15) -> Dict:
+    """
+    Headless one-shot run of a Python file, capturing stdout/stderr.
+
+    This is a utility for tooling (search_workspace's sibling helpers, a
+    future Bob Assistant action, etc.) — not for the IDE's Run button, which
+    now types `python <file>` straight into a real terminal tab so servers,
+    REPLs, and interactive scripts behave exactly like they would in a normal
+    shell.
+    """
     file_path = safe_path(project, rel_path)
     if not file_path.exists() or file_path.suffix != ".py":
         raise ValueError("Only existing Python files can be run")
@@ -28,91 +37,31 @@ def run_python(project: str, rel_path: str) -> Dict:
             "stderr": "",
         }
 
-    code = file_path.read_text(encoding="utf-8", errors="replace")
-    is_server_like = "app.run(" in code or "Flask(" in code
-
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
-    # Strip ALL Werkzeug reloader env vars so it cannot inherit a socket fd
-    # or think it's already inside a reloader child process.
-    for key_to_remove in ("WERKZEUG_RUN_MAIN", "WERKZEUG_SERVER_FD",
-                          "WERKZEUG_RESTART_PID", "_FLASK_DEBUG_REQ"):
-        env.pop(key_to_remove, None)
-
-    # Inject a site-customise shim via PYTHONSTARTUP that monkey-patches
-    # Flask's app.run() before the user's code even calls it.
-    # This is the only approach that works without modifying the source file
-    # and without a temp file that the reloader watches.
-    shim = (
-        "import flask as _flask\n"
-        "_orig_run = _flask.Flask.run\n"
-        "def _safe_run(self, *a, **kw):\n"
-        "    kw['debug'] = False\n"
-        "    kw['use_reloader'] = False\n"
-        "    return _orig_run(self, *a, **kw)\n"
-        "_flask.Flask.run = _safe_run\n"
-    )
-
-    if is_server_like:
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                shim + "\nimport runpy\nrunpy.run_path(r'" + str(file_path).replace("\\", "\\\\") + "', run_name='__main__')",
-            ],
-            cwd=str(WORKSPACE_DIR / project),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+    try:
+        result = subprocess.run(
+            [sys.executable, str(file_path)],
+            cwd=str(safe_path(project)),
+            capture_output=True,
             text=True,
+            timeout=timeout,
             env=env,
         )
-        RUNNING_PROCESSES[_safe_key(project, rel_path)] = proc
-        time.sleep(1.8)
-
-        if proc.poll() is None:
-            return {
-                "command": f"python {rel_path}",
-                "returncode": None,
-                "stdout": (
-                    "Server started (reloader disabled automatically).\n"
-                    "Open the URL shown by Flask — usually http://127.0.0.1:7000\n"
-                    "Click Stop to terminate."
-                ),
-                "stderr": "",
-            }
-
-        stdout, stderr = proc.communicate(timeout=3)
         return {
             "command": f"python {rel_path}",
-            "returncode": proc.returncode,
-            "stdout": stdout,
-            "stderr": stderr,
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
         }
-
-    else:
-        try:
-            result = subprocess.run(
-                [sys.executable, str(file_path)],
-                cwd=str(WORKSPACE_DIR / project),
-                capture_output=True,
-                text=True,
-                timeout=15,
-                env=env,
-            )
-            return {
-                "command": f"python {rel_path}",
-                "returncode": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-            }
-        except subprocess.TimeoutExpired as exc:
-            return {
-                "command": f"python {rel_path}",
-                "returncode": None,
-                "stdout": exc.stdout or "",
-                "stderr": "Process timed out after 15 seconds.",
-            }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "command": f"python {rel_path}",
+            "returncode": None,
+            "stdout": exc.stdout or "",
+            "stderr": f"Process timed out after {timeout} seconds.",
+        }
 
 
 def stop_python(project: str, rel_path: str) -> Dict:
@@ -128,3 +77,50 @@ def stop_python(project: str, rel_path: str) -> Dict:
         proc.kill()
     del RUNNING_PROCESSES[key]
     return {"stopped": True, "message": f"Stopped {rel_path}."}
+
+
+def run_pytest(project: str) -> Dict:
+    root = safe_path(project)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        return {
+            "command": "pytest",
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "pytest is not installed in this Python environment.",
+            "passed": 0,
+            "failed": 0,
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "command": "pytest",
+            "returncode": None,
+            "stdout": exc.stdout or "",
+            "stderr": "pytest timed out after 30 seconds.",
+            "passed": 0,
+            "failed": 0,
+        }
+
+    output = f"{result.stdout}\n{result.stderr}"
+    return {
+        "command": "pytest",
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "passed": _count_pytest_status(output, "passed"),
+        "failed": _count_pytest_status(output, "failed"),
+    }
+
+
+def _count_pytest_status(output: str, status: str) -> int:
+    match = re.search(rf"(\d+)\s+{re.escape(status)}", output)
+    if match:
+        return int(match.group(1))
+    return 0

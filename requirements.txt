@@ -1,2 +1,9 @@
 Flask==3.0.3
 Werkzeug==3.0.3
+Flask-SocketIO==5.3.6
+python-socketio==5.11.4
+python-engineio==4.9.1
+mcp[cli]>=1.26,<2
+# Windows only — install this for a real interactive terminal on Windows.
+# Without it, Bob IDE falls back to a limited (non-interactive) shell on Windows.
+pywinpty==2.0.13; platform_system == "Windows"
