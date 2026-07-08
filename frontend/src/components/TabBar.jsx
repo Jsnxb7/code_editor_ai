@@ -1,12 +1,15 @@
 import { fileIcon } from "../fileIcons";
+import { useIde } from "../context/IdeContext";
 
 export default function TabBar({ tabs, activePath, onSelect, onClose }) {
+  const { getSourceDecoration } = useIde();
   if (!tabs.length) return null;
   return (
     <div className="tab-bar">
       {tabs.map((tab) => {
         const icon = fileIcon(tab.path);
         const name = tab.path.split("/").pop();
+        const decoration = getSourceDecoration(tab.path);
         return (
           <div
             key={tab.path}
@@ -18,6 +21,11 @@ export default function TabBar({ tabs, activePath, onSelect, onClose }) {
             </span>
             <span className="tab-name">{name}</span>
             {tab.dirty && <span className="tab-dot" />}
+            {decoration && (
+              <span className={`scm-decoration tab-scm-decoration ${decoration.className}`} title={decoration.title}>
+                {decoration.label}
+              </span>
+            )}
             <span
               className="tab-close"
               onClick={(e) => {

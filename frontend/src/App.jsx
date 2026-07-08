@@ -17,6 +17,7 @@ export default function App() {
   const {
     loadWorkspaces,
     loadTree,
+    loadWorktree,
     sidebarCollapsed,
     bobCollapsed,
     bottomCollapsed,
@@ -40,7 +41,10 @@ export default function App() {
   useEffect(() => {
     (async () => {
       const project = await loadWorkspaces();
-      if (project) await loadTree(project);
+      if (project) {
+        await loadTree(project);
+        await loadWorktree(project);
+      }
       setBooted(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

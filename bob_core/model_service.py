@@ -29,6 +29,11 @@ def _emit(project: str, run_id: str, status: str, **extra: Any) -> None:
         _publisher("model:run", payload)
 
 
+def _emit_worktree_changed(project: str) -> None:
+    if _publisher:
+        _publisher("worktree:changed", {"project": project})
+
+
 def _context(project: str, active_path: str | None) -> dict:
     paths = list_files(project)
     files = {}
@@ -100,6 +105,8 @@ def _execute(project: str, run_id: str, prompt: str, mode: str, active_path: str
             result["files"],
             result["final_status"],
         )
+        if proposals:
+            _emit_worktree_changed(project)
         record = update_run(
             project,
             run_id,
@@ -119,4 +126,3 @@ def _execute(project: str, run_id: str, prompt: str, mode: str, active_path: str
 
 def model_run_status(project: str, run_id: str) -> dict:
     return get_run(project, run_id)
-

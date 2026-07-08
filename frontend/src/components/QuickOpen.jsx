@@ -4,7 +4,7 @@ import { fuzzyFilter, flattenFiles } from "../fuzzy";
 import { fileIcon } from "../fileIcons";
 
 export default function QuickOpen() {
-  const { quickOpenOpen, setQuickOpenOpen, tree, openFile } = useIde();
+  const { quickOpenOpen, setQuickOpenOpen, tree, openFile, getSourceDecoration } = useIde();
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
 
@@ -47,6 +47,7 @@ export default function QuickOpen() {
         <div className="palette-list">
           {results.map((path, i) => {
             const icon = fileIcon(path);
+            const decoration = getSourceDecoration(path);
             return (
               <div
                 key={path}
@@ -56,6 +57,11 @@ export default function QuickOpen() {
               >
                 <span style={{ color: icon.color }}>{icon.glyph}</span>
                 <span>{path}</span>
+                {decoration && (
+                  <span className={`scm-decoration palette-scm-decoration ${decoration.className}`} title={decoration.title}>
+                    {decoration.label}
+                  </span>
+                )}
               </div>
             );
           })}

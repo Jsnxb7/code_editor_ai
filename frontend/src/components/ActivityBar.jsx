@@ -10,9 +10,8 @@ export default function ActivityBar() {
     bobCollapsed,
     setBobCollapsed,
     setCommandPaletteOpen,
-    worktreeStatus,
+    sourceControlTotal,
   } = useIde();
-  const sourceCount = Object.values(worktreeStatus?.summary || {}).reduce((sum, value) => sum + value, 0);
 
   const selectView = (view) => {
     if (sidebarView === view && !sidebarCollapsed) setSidebarCollapsed(true);
@@ -32,7 +31,7 @@ export default function ActivityBar() {
       </button>
       <button className={`activity-btn ${sidebarView === "sourceControl" && !sidebarCollapsed ? "active" : ""}`} title="Source Control" onClick={() => selectView("sourceControl")}>
         <GitBranch size={22} />
-        {sourceCount > 0 && <span className="activity-badge">{sourceCount}</span>}
+        {sourceControlTotal > 0 && <span className="activity-badge">{sourceControlTotal}</span>}
       </button>
       <button className="activity-btn" title="Command Palette (Ctrl+Shift+P)" onClick={() => setCommandPaletteOpen(true)}>
         <TerminalSquare size={21} />

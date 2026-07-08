@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,10 +11,11 @@ from typing import Any
 
 from bob_core.file_manager import is_allowed_text_file, safe_path
 from bob_core.json_store import load_json, project_lock, save_json_atomic
-from config import IGNORED_DIRS
+from config import IGNORED_DIRS, MAX_FILE_SIZE
 
 SCHEMA_VERSION = "0.1"
 ACTIVE_STATUSES = {"proposed", "unstaged", "staged", "conflict"}
+DEFAULT_IGNORE_PATTERNS = [".bob/", ".git/", "node_modules/", "__pycache__/", "*.pyc", "dist/", "build/"]
 
 
 def _now() -> str:
@@ -28,6 +30,54 @@ def _hash(content: str | None) -> str:
     return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
 
 
+def _bobignore_path(project: str) -> Path:
+    return safe_path(project) / ".bobignore"
+
+
+def _ignore_patterns(project: str) -> list[str]:
+    path = _bobignore_path(project)
+    patterns = list(DEFAULT_IGNORE_PATTERNS)
+    if path.exists():
+        try:
+            patterns.extend(
+                line.strip()
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            )
+        except OSError:
+            pass
+    return patterns
+
+
+def _is_ignored(project: str, rel_path: str, is_dir: bool = False) -> bool:
+    normalized = rel_path.replace("\\", "/").strip("/")
+    candidate = f"{normalized}/" if is_dir else normalized
+    for pattern in _ignore_patterns(project):
+        clean = pattern.replace("\\", "/").strip()
+        if not clean:
+            continue
+        if clean.endswith("/"):
+            folder = clean.strip("/")
+            if normalized == folder or normalized.startswith(f"{folder}/"):
+                return True
+        elif fnmatch.fnmatch(normalized, clean) or fnmatch.fnmatch(candidate, clean):
+            return True
+    return False
+
+
+def _read_workspace_text(path: Path) -> tuple[str | None, dict[str, Any]]:
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None, {"missing": True}
+    if size > MAX_FILE_SIZE:
+        return None, {"large_file": True, "size": size}
+    try:
+        return path.read_text(encoding="utf-8"), {"size": size}
+    except (OSError, UnicodeError):
+        return None, {"binary_file": True, "size": size}
+
+
 def _project_files(project: str) -> dict[str, str]:
     root = safe_path(project)
     files: dict[str, str] = {}
@@ -37,15 +87,37 @@ def _project_files(project: str) -> dict[str, str]:
         rel = path.relative_to(root)
         if any(part.startswith(".") or part in IGNORED_DIRS for part in rel.parts[:-1]):
             continue
+        rel_path = rel.as_posix()
+        if _is_ignored(project, rel_path):
+            continue
         if path.name.startswith(".") and path.name not in {".env", ".gitignore"}:
             continue
         if not is_allowed_text_file(path):
             continue
-        try:
-            files[rel.as_posix()] = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
+        content, meta = _read_workspace_text(path)
+        if meta.get("large_file") or meta.get("binary_file") or content is None:
             continue
+        files[rel_path] = content
     return files
+
+
+def _project_paths(project: str) -> set[str]:
+    root = safe_path(project)
+    paths: set[str] = set()
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root)
+        rel_path = rel.as_posix()
+        if any(part.startswith(".") or part in IGNORED_DIRS for part in rel.parts[:-1]):
+            continue
+        if _is_ignored(project, rel_path):
+            continue
+        if path.name.startswith(".") and path.name not in {".env", ".gitignore", ".bobignore"}:
+            continue
+        if is_allowed_text_file(path):
+            paths.add(rel_path)
+    return paths
 
 
 def _default_index(project: str) -> dict:
@@ -161,6 +233,51 @@ def _hunks(diff_text: str) -> list[dict[str, Any]]:
     return hunks
 
 
+def _get_hunk(change: dict, hunk_id: str) -> dict:
+    hunk = next((item for item in change.get("hunks", []) if item.get("hunk_id") == hunk_id), None)
+    if not hunk:
+        raise KeyError(f"Hunk not found: {hunk_id}")
+    return hunk
+
+
+def _hunk_blocks(hunk: dict) -> tuple[list[str], list[str]]:
+    old_lines, new_lines = [], []
+    for line in hunk.get("diff", "").splitlines()[1:]:
+        if not line:
+            marker, text = " ", ""
+        else:
+            marker, text = line[0], line[1:]
+        if marker in {" ", "-"}:
+            old_lines.append(text + "\n")
+        if marker in {" ", "+"}:
+            new_lines.append(text + "\n")
+    return old_lines, new_lines
+
+
+def _apply_hunk_to_content(content: str, hunk: dict, reverse: bool = False) -> str:
+    lines = content.splitlines(keepends=True)
+    old_lines, new_lines = _hunk_blocks(hunk)
+    start = max(0, int(hunk["new_start" if reverse else "old_start"]) - 1)
+    remove_count = int(hunk["new_lines" if reverse else "old_lines"])
+    replacement = old_lines if reverse else new_lines
+    return "".join(lines[:start] + replacement + lines[start + remove_count:])
+
+
+def _mark_hunk(change: dict, hunk_id: str, status: str) -> None:
+    for hunk in change.get("hunks", []):
+        if hunk.get("hunk_id") == hunk_id:
+            hunk["status"] = status
+            return
+
+
+def _merge_hunk_status(old_hunks: list[dict], new_hunks: list[dict]) -> list[dict]:
+    status_by_id = {hunk.get("hunk_id"): hunk.get("status") for hunk in old_hunks}
+    for hunk in new_hunks:
+        if status_by_id.get(hunk.get("hunk_id")):
+            hunk["status"] = status_by_id[hunk["hunk_id"]]
+    return new_hunks
+
+
 def _estimate_risk(path: str, action: str, review_status: str) -> str:
     lower = path.lower()
     critical = (
@@ -245,12 +362,13 @@ def record_manual_change(project: str, path: str) -> dict | None:
         init_worktree(project)
         _, baseline = _latest_snapshot(project)
         target = safe_path(project, path)
-        current = target.read_text(encoding="utf-8") if target.is_file() else None
+        current, current_meta = _read_workspace_text(target) if target.is_file() else (None, {})
         before = baseline.get(path)
         diff_text = _diff(path, before, current)
         data = _read(project, "changes.json", "changes")
         existing = _active_change(data["changes"], path)
-        if before == current:
+        metadata_only = bool(current_meta.get("large_file") or current_meta.get("binary_file"))
+        if before == current and not metadata_only:
             if existing and existing["source"] != "bob_model":
                 existing["status"] = "discarded"
                 existing["updated_at"] = _now()
@@ -267,12 +385,18 @@ def record_manual_change(project: str, path: str) -> dict | None:
                     if item["change_id"] != change["change_id"]
                 ]
                 _write(project, "staged.json", staged)
-            change["action"] = _action(before, current)
+            change["action"] = "add" if metadata_only and before is None and target.exists() else _action(before, current)
             change["after_hash"] = _hash(current)
             change["after_size"] = len((current or "").encode("utf-8"))
-            change["after_blob"] = _write_blob(project, change["change_id"], "after", current or "")
+            if current_meta.get("large_file") or current_meta.get("binary_file"):
+                change.pop("after_blob", None)
+            else:
+                change["after_blob"] = _write_blob(project, change["change_id"], "after", current or "")
             change["patch_path"] = _save_patch(project, change["change_id"], path, before, current)
-            change["hunks"] = _hunks(diff_text)
+            change["hunks"] = _merge_hunk_status(change.get("hunks", []), _hunks(diff_text))
+            change["large_file"] = bool(current_meta.get("large_file"))
+            change["binary_file"] = bool(current_meta.get("binary_file"))
+            change["safe_message"] = "Large file changed" if current_meta.get("large_file") else "Binary file changed" if current_meta.get("binary_file") else ""
             change["status"] = "unstaged"
             change["updated_at"] = _now()
         else:
@@ -283,18 +407,22 @@ def record_manual_change(project: str, path: str) -> dict | None:
                 "run_id": None,
                 "source": "manual",
                 "path": path,
-                "action": _action(before, current),
+                "action": "add" if metadata_only and before is None and target.exists() else _action(before, current),
                 "status": "unstaged",
                 "before_hash": _hash(before),
                 "after_hash": _hash(current),
                 "before_size": len((before or "").encode("utf-8")),
                 "after_size": len((current or "").encode("utf-8")),
                 "before_blob": _write_blob(project, change_id, "before", before or ""),
-                "after_blob": _write_blob(project, change_id, "after", current or ""),
                 "hunks": _hunks(diff_text),
+                "large_file": bool(current_meta.get("large_file")),
+                "binary_file": bool(current_meta.get("binary_file")),
+                "safe_message": "Large file changed" if current_meta.get("large_file") else "Binary file changed" if current_meta.get("binary_file") else "",
                 "created_at": _now(),
                 "updated_at": _now(),
             }
+            if not change["large_file"] and not change["binary_file"]:
+                change["after_blob"] = _write_blob(project, change_id, "after", current or "")
             change["patch_path"] = _save_patch(project, change_id, path, before, current)
             data["changes"].append(change)
         _write(project, "changes.json", data)
@@ -313,9 +441,12 @@ def record_rename(project: str, old_path: str, new_path: str) -> list[dict]:
 def detect_manual_changes(project: str) -> dict:
     with project_lock(project):
         init_worktree(project)
-        parent_snapshot, baseline = _latest_snapshot(project)
+        _, baseline = _latest_snapshot(project)
         current = _project_files(project)
+        current_paths = _project_paths(project)
         for path in sorted(set(baseline) | set(current)):
+            record_manual_change(project, path)
+        for path in sorted(current_paths - set(current) - set(baseline)):
             record_manual_change(project, path)
         return get_status(project)
 
@@ -404,6 +535,8 @@ def get_diff(project: str, change_id: str) -> dict:
     with project_lock(project):
         init_worktree(project)
         _, change = _find_change(project, change_id)
+        if change.get("large_file") or change.get("binary_file"):
+            return {**change, "before_content": "", "after_content": "", "diff": change.get("safe_message") or "File cannot be diffed"}
         before = _read_blob(project, change, "before")
         after = _read_blob(project, change, "after")
         return {**change, "before_content": before, "after_content": after, "diff": _diff(change["path"], before, after)}
@@ -457,6 +590,67 @@ def unstage_all(project: str) -> dict:
     return get_status(project)
 
 
+def _staged_content(project: str, change: dict) -> str | None:
+    staged = _read(project, "staged.json", "staged")["staged"]
+    item = next((entry for entry in reversed(staged) if entry["change_id"] == change["change_id"]), None)
+    if not item:
+        return None
+    return safe_path(project, item["after_blob"]).read_text(encoding="utf-8")
+
+
+def stage_hunk(project: str, change_id: str, hunk_id: str) -> dict:
+    with project_lock(project):
+        data, change = _find_change(project, change_id)
+        if change["status"] not in {"unstaged", "staged"}:
+            raise ValueError("Only manual changes can be staged by hunk")
+        if change.get("large_file") or change.get("binary_file"):
+            raise ValueError("Large or binary files cannot be staged by hunk")
+        hunk = _get_hunk(change, hunk_id)
+        _, baseline = _latest_snapshot(project)
+        base_content = _staged_content(project, change)
+        if base_content is None:
+            base_content = baseline.get(change["path"], "")
+        staged_content = _apply_hunk_to_content(base_content, hunk)
+        staged = _read(project, "staged.json", "staged")
+        staged["staged"] = [item for item in staged["staged"] if item["change_id"] != change_id]
+        staged_blob = _write_blob(project, change_id, "staged", staged_content)
+        staged["staged"].append({
+            "change_id": change_id,
+            "path": change["path"],
+            "action": change["action"],
+            "after_blob": staged_blob,
+            "after_hash": _hash(staged_content),
+            "hunk_ids": sorted({hunk_id, *[item.get("hunk_id", "") for item in change.get("hunks", []) if item.get("status") == "staged"]} - {""}),
+            "partial": True,
+            "staged_at": _now(),
+        })
+        _mark_hunk(change, hunk_id, "staged")
+        change["partial_state"] = "partially staged"
+        change["updated_at"] = _now()
+        _write(project, "staged.json", staged)
+        _write(project, "changes.json", data)
+        return change
+
+
+def discard_hunk(project: str, change_id: str, hunk_id: str) -> dict:
+    with project_lock(project):
+        data, change = _find_change(project, change_id)
+        if change["status"] not in {"unstaged", "staged"}:
+            raise ValueError("Only manual changes can be discarded by hunk")
+        if change.get("large_file") or change.get("binary_file"):
+            raise ValueError("Large or binary files cannot be discarded by hunk")
+        hunk = _get_hunk(change, hunk_id)
+        target = safe_path(project, change["path"])
+        current, _ = _read_workspace_text(target) if target.is_file() else ("", {})
+        restored = _apply_hunk_to_content(current or "", hunk, reverse=True)
+        _write_change_content(project, change, restored)
+        _mark_hunk(change, hunk_id, "discarded")
+        change["partial_state"] = "hunk discarded"
+        change["updated_at"] = _now()
+        _write(project, "changes.json", data)
+        return record_manual_change(project, change["path"]) or change
+
+
 def _write_change_content(project: str, change: dict, content: str | None) -> None:
     target = safe_path(project, change["path"])
     if change["action"] == "delete" or content is None:
@@ -465,6 +659,44 @@ def _write_change_content(project: str, change: dict, content: str | None) -> No
         return
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8", newline="\n")
+
+
+def apply_hunk(project: str, change_id: str, hunk_id: str) -> dict:
+    with project_lock(project):
+        data, change = _find_change(project, change_id)
+        if change["status"] not in {"proposed", "conflict"}:
+            raise ValueError("Only Bob proposals can be applied by hunk")
+        if change.get("review_status") == "FAIL":
+            raise ValueError("Reviewer failed this proposal; explicit full override is required")
+        if change.get("large_file") or change.get("binary_file"):
+            raise ValueError("Large or binary files cannot be applied by hunk")
+        target = safe_path(project, change["path"])
+        current = target.read_text(encoding="utf-8") if target.is_file() else ""
+        if _hash(current if target.is_file() else None) != change["base_hash"]:
+            _mark_hunk(change, hunk_id, "conflict")
+            change["status"] = "conflict"
+            change["partial_state"] = "hunk conflict"
+            change["updated_at"] = _now()
+            _write(project, "changes.json", data)
+            raise ValueError("File changed since this proposal was created")
+        hunk = _get_hunk(change, hunk_id)
+        updated = _apply_hunk_to_content(current, hunk)
+        _write_change_content(project, change, updated)
+        _mark_hunk(change, hunk_id, "applied")
+        change["partial_state"] = "some hunks applied"
+        change["updated_at"] = _now()
+        _write(project, "changes.json", data)
+        record_manual_change(project, change["path"])
+        return change
+
+
+def apply_all_hunks(project: str, change_id: str) -> dict:
+    with project_lock(project):
+        data, change = _find_change(project, change_id)
+        for hunk in change.get("hunks", []):
+            hunk["status"] = "applied"
+        _write(project, "changes.json", data)
+        return apply_change(project, change_id)
 
 
 def apply_change(project: str, change_id: str, override: bool = False) -> dict:
@@ -531,7 +763,7 @@ def discard_all(project: str) -> dict:
 def create_snapshot(project: str, label: str | None = None, message: str | None = None) -> dict:
     with project_lock(project):
         init_worktree(project)
-        _, baseline = _latest_snapshot(project)
+        parent_snapshot, baseline = _latest_snapshot(project)
         next_baseline = dict(baseline)
         staged = _read(project, "staged.json", "staged")
         changes_data = _read(project, "changes.json", "changes")
@@ -541,7 +773,7 @@ def create_snapshot(project: str, label: str | None = None, message: str | None 
             else:
                 next_baseline[item["path"]] = safe_path(project, item["after_blob"]).read_text(encoding="utf-8")
         staged_ids = {item["change_id"] for item in staged["staged"]}
-        record = _create_snapshot_record(project, message or label or "Checkpoint", next_baseline)
+        record = _create_snapshot_record(project, label or message or "Checkpoint", next_baseline)
         record["message"] = message or label or "Checkpoint"
         record["type"] = "manual_checkpoint"
         record["parent_snapshot"] = parent_snapshot.get("snapshot_id")
@@ -579,6 +811,120 @@ def get_file_history(project: str, path: str) -> dict:
             if item["path"] == path
         ]
         return {"project": project, "path": path, "changes": changes}
+
+
+def _snapshot_by_id(project: str, snapshot_id: str | None) -> tuple[dict, dict[str, str]]:
+    snapshots = _read(project, "snapshots.json", "snapshots")["snapshots"]
+    if not snapshots:
+        raise RuntimeError("Worktree has no snapshots")
+    record = next((item for item in snapshots if item["snapshot_id"] == snapshot_id), None) if snapshot_id else snapshots[-1]
+    if not record:
+        raise KeyError(f"Snapshot not found: {snapshot_id}")
+    payload = load_json(_snapshot_file(project, record["snapshot_id"]), {"files": {}})
+    return record, payload.get("files", {})
+
+
+def compare_with_snapshot(project: str, path: str, snapshot_id: str | None = None) -> dict:
+    with project_lock(project):
+        record, files = _snapshot_by_id(project, snapshot_id)
+        before = files.get(path)
+        target = safe_path(project, path)
+        after, meta = _read_workspace_text(target) if target.is_file() else (None, {})
+        if meta.get("large_file") or meta.get("binary_file"):
+            return {
+                "project": project,
+                "path": path,
+                "snapshot_id": record["snapshot_id"],
+                "before_content": "",
+                "after_content": "",
+                "diff": "Large file changed" if meta.get("large_file") else "Binary file changed",
+                **meta,
+            }
+        return {
+            "project": project,
+            "path": path,
+            "snapshot_id": record["snapshot_id"],
+            "before_content": before or "",
+            "after_content": after or "",
+            "diff": _diff(path, before, after),
+        }
+
+
+def restore_file(project: str, path: str, snapshot_id: str | None = None) -> dict:
+    with project_lock(project):
+        record, files = _snapshot_by_id(project, snapshot_id)
+        change = {"path": path, "action": "modify"}
+        if path in files:
+            _write_change_content(project, change, files[path])
+        else:
+            _write_change_content(project, change, None)
+        recorded = record_manual_change(project, path)
+        return {"project": project, "path": path, "snapshot_id": record["snapshot_id"], "change": recorded}
+
+
+def restore_snapshot(project: str, snapshot_id: str) -> dict:
+    with project_lock(project):
+        record, files = _snapshot_by_id(project, snapshot_id)
+        root = safe_path(project)
+        current_paths = _project_paths(project)
+        for path in current_paths - set(files):
+            _write_change_content(project, {"path": path, "action": "delete"}, None)
+        for path, content in files.items():
+            _write_change_content(project, {"path": path, "action": "modify"}, content)
+        detect_manual_changes(project)
+        return {"project": project, "snapshot_id": record["snapshot_id"], "restored_files": len(files)}
+
+
+def ignore_path(project: str, path: str) -> dict:
+    with project_lock(project):
+        safe_path(project, path)
+        ignore_file = _bobignore_path(project)
+        existing = ignore_file.read_text(encoding="utf-8").splitlines() if ignore_file.exists() else []
+        pattern = path.replace("\\", "/").strip("/")
+        if safe_path(project, path).is_dir() and not pattern.endswith("/"):
+            pattern += "/"
+        if pattern not in existing:
+            existing.append(pattern)
+            ignore_file.write_text("\n".join(existing).strip() + "\n", encoding="utf-8", newline="\n")
+        detect_manual_changes(project)
+        return {"project": project, "ignored": pattern}
+
+
+def get_timeline(project: str) -> dict:
+    with project_lock(project):
+        init_worktree(project)
+        events = []
+        for snapshot in _read(project, "snapshots.json", "snapshots")["snapshots"]:
+            events.append({
+                "type": "snapshot",
+                "id": snapshot["snapshot_id"],
+                "label": snapshot.get("message") or snapshot.get("label"),
+                "created_at": snapshot.get("created_at"),
+            })
+        for change in _read(project, "changes.json", "changes")["changes"]:
+            events.append({
+                "type": "change",
+                "id": change["change_id"],
+                "label": f"{change['status']} {change['path']}",
+                "path": change["path"],
+                "created_at": change.get("updated_at") or change.get("created_at"),
+            })
+        for run in _read(project, "runs.json", "runs")["runs"]:
+            events.append({
+                "type": "run",
+                "id": run["run_id"],
+                "label": f"{run.get('status')} - {run.get('user_prompt', '')}",
+                "created_at": run.get("updated_at") or run.get("created_at"),
+            })
+        for item in _read(project, "model_runs.json", "model_runs")["model_runs"]:
+            events.append({
+                "type": "model",
+                "id": item["model_run_id"],
+                "label": f"{item.get('stage')} output for {item.get('run_id')}",
+                "created_at": item.get("created_at"),
+            })
+        events.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+        return {"project": project, "events": events}
 
 
 def create_run(project: str, prompt: str, mode: str) -> dict:

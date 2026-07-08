@@ -24,6 +24,8 @@ export default function Sidebar() {
     confirmDialog,
     runSearch,
     searchResults,
+    getSourceDecoration,
+    getFolderChangeCount,
   } = useIde();
 
   const [menu, setMenu] = useState(null); // { x, y, item }
@@ -312,6 +314,8 @@ export default function Sidebar() {
               onCancelNew={cancelInlineNew}
               onChangeRename={(v) => setInlineRename((s) => ({ ...s, value: v }))}
               onChangeNew={(v) => setInlineNew((s) => ({ ...s, value: v }))}
+              getSourceDecoration={getSourceDecoration}
+              getFolderChangeCount={getFolderChangeCount}
             />
           ))}
       </div>

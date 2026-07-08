@@ -27,20 +27,29 @@ from bob_core.file_manager import (
 from bob_core.validator import validate_file
 from bob_core.json_worktree import (
     apply_all,
+    apply_all_hunks,
     apply_change,
+    apply_hunk,
+    compare_with_snapshot,
     create_snapshot,
     detect_manual_changes,
     discard_all,
     discard_change,
+    discard_hunk,
     get_diff,
     get_file_history,
     get_history,
     get_status,
+    get_timeline,
+    ignore_path,
     init_worktree,
     record_manual_change,
     record_rename,
+    restore_file,
+    restore_snapshot,
     stage_all,
     stage_change,
+    stage_hunk,
     unstage_all,
     unstage_change,
 )
@@ -487,6 +496,37 @@ def worktree_get_hunks(project: str, change_id: str) -> dict:
     return {"project": project, "change_id": change_id, "hunks": diff.get("hunks", [])}
 
 
+@capability("worktree.stage_hunk")
+def worktree_stage_hunk(project: str, change_id: str, hunk_id: str) -> dict:
+    result = stage_hunk(project, change_id, hunk_id)
+    _worktree_event(project)
+    return result
+
+
+@capability("worktree.discard_hunk")
+def worktree_discard_hunk(project: str, change_id: str, hunk_id: str) -> dict:
+    result = discard_hunk(project, change_id, hunk_id)
+    _publish("workspace:changed", {"project": project, "paths": [result["path"]] if result else []})
+    _worktree_event(project)
+    return result
+
+
+@capability("worktree.apply_hunk")
+def worktree_apply_hunk(project: str, change_id: str, hunk_id: str) -> dict:
+    result = apply_hunk(project, change_id, hunk_id)
+    _publish("workspace:changed", {"project": project, "paths": [result["path"]]})
+    _worktree_event(project)
+    return result
+
+
+@capability("worktree.apply_all_hunks")
+def worktree_apply_all_hunks(project: str, change_id: str) -> dict:
+    result = apply_all_hunks(project, change_id)
+    _publish("workspace:changed", {"project": project, "paths": [result["path"]]})
+    _worktree_event(project)
+    return result
+
+
 @capability("worktree.generate_checkpoint_message")
 def worktree_generate_checkpoint_message(project: str) -> dict:
     status = get_status(project)
@@ -498,6 +538,40 @@ def worktree_generate_checkpoint_message(project: str) -> dict:
     if len(staged) == 1:
         return {"message": f"{actions.get(first['action'], 'Update')} {first['path']}"}
     return {"message": f"Update {len(staged)} files"}
+
+
+@capability("worktree.restore_file")
+def worktree_restore_file(project: str, path: str, snapshot_id: str | None = None) -> dict:
+    result = restore_file(project, path, snapshot_id)
+    _publish("workspace:changed", {"project": project, "paths": [path]})
+    _worktree_event(project)
+    return result
+
+
+@capability("worktree.compare_with_snapshot")
+def worktree_compare_snapshot(project: str, path: str, snapshot_id: str | None = None) -> dict:
+    return compare_with_snapshot(project, path, snapshot_id)
+
+
+@capability("worktree.restore_snapshot")
+def worktree_restore_snapshot(project: str, snapshot_id: str) -> dict:
+    result = restore_snapshot(project, snapshot_id)
+    _publish("workspace:changed", {"project": project, "paths": []})
+    _worktree_event(project)
+    return result
+
+
+@capability("worktree.ignore_path")
+def worktree_ignore_path(project: str, path: str) -> dict:
+    result = ignore_path(project, path)
+    _publish("workspace:changed", {"project": project, "paths": [".bobignore"]})
+    _worktree_event(project)
+    return result
+
+
+@capability("worktree.timeline")
+def worktree_timeline(project: str) -> dict:
+    return get_timeline(project)
 
 
 @capability("model.plan")

@@ -18,6 +18,8 @@ export default function TreeNode({
   onCancelNew,
   onChangeRename,
   onChangeNew,
+  getSourceDecoration,
+  getFolderChangeCount,
 }) {
   const [open, setOpen] = useState(true);
 
@@ -26,6 +28,7 @@ export default function TreeNode({
   const isSelectedFolder = selectedFolder === item.path;
 
   if (item.type === "folder") {
+    const folderCount = getFolderChangeCount?.(item.path) || 0;
     return (
       <div>
         <div
@@ -55,6 +58,7 @@ export default function TreeNode({
           ) : (
             <span className="tree-label">{item.name}</span>
           )}
+          {folderCount > 0 && <span className="tree-folder-badge">{folderCount}</span>}
         </div>
 
         {open && (
@@ -101,6 +105,8 @@ export default function TreeNode({
                 onCancelNew={onCancelNew}
                 onChangeRename={onChangeRename}
                 onChangeNew={onChangeNew}
+                getSourceDecoration={getSourceDecoration}
+                getFolderChangeCount={getFolderChangeCount}
               />
             ))}
           </div>
@@ -111,6 +117,7 @@ export default function TreeNode({
 
   // File node
   const icon = fileIcon(item.name);
+  const decoration = getSourceDecoration?.(item.path);
   return (
     <div
       className={`tree-row tree-file ${activePath === item.path ? "active" : ""}`}
@@ -136,6 +143,11 @@ export default function TreeNode({
         />
       ) : (
         <span className="tree-label">{item.name}</span>
+      )}
+      {decoration && (
+        <span className={`scm-decoration ${decoration.className}`} title={decoration.title}>
+          {decoration.label}
+        </span>
       )}
     </div>
   );

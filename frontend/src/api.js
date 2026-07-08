@@ -76,10 +76,28 @@ export const api = {
     invoke("worktree.create_snapshot", { project, label, message: label }),
   worktreeHistory: (project) => invoke("worktree.history", { project }),
   worktreeFileHistory: (project, path) => invoke("worktree.file_history", { project, path }),
+  worktreeTimeline: (project) => invoke("worktree.timeline", { project }),
+  worktreeStageHunk: (project, changeId, hunkId) =>
+    invoke("worktree.stage_hunk", { project, change_id: changeId, hunk_id: hunkId }),
+  worktreeDiscardHunk: (project, changeId, hunkId) =>
+    invoke("worktree.discard_hunk", { project, change_id: changeId, hunk_id: hunkId }),
+  worktreeApplyHunk: (project, changeId, hunkId) =>
+    invoke("worktree.apply_hunk", { project, change_id: changeId, hunk_id: hunkId }),
+  worktreeApplyAllHunks: (project, changeId) =>
+    invoke("worktree.apply_all_hunks", { project, change_id: changeId }),
+  worktreeRestoreFile: (project, path, snapshotId) =>
+    invoke("worktree.restore_file", { project, path, snapshot_id: snapshotId }),
+  worktreeCompareSnapshot: (project, path, snapshotId) =>
+    invoke("worktree.compare_with_snapshot", { project, path, snapshot_id: snapshotId }),
+  worktreeRestoreSnapshot: (project, snapshotId) =>
+    invoke("worktree.restore_snapshot", { project, snapshot_id: snapshotId }),
+  worktreeIgnorePath: (project, path) => invoke("worktree.ignore_path", { project, path }),
   worktreeGenerateCheckpointMessage: (project) =>
     invoke("worktree.generate_checkpoint_message", { project }),
   modelPlan: (project, prompt, activePath) =>
     invoke("model.plan", { project, prompt, active_path: activePath }),
   modelRunAgent: (project, prompt, activePath) =>
     invoke("model.run_agent", { project, prompt, active_path: activePath }),
+  modelRunStatus: (project, runId) =>
+    invoke("model.run_status", { project, run_id: runId }),
 };

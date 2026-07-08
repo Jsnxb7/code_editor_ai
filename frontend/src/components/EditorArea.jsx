@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import Editor, { DiffEditor } from "@monaco-editor/react";
-import { X } from "lucide-react";
+import { Check, Clipboard, Eye, Layers, Minus, X } from "lucide-react";
+import { api } from "../api";
 import { useIde, extToLang } from "../context/IdeContext";
 import { useLsp } from "../hooks/useLsp";
 import TabBar from "./TabBar";
@@ -34,11 +35,15 @@ function defineBobTheme(monaco) {
 }
 
 export default function EditorArea() {
-  const { tabs, activePath, currentProject, setActivePath, closeTab, updateTabContent, saveActiveTab, saveAllTabs, diffChange, setDiffChange } =
+  const {
+    tabs, activePath, currentProject, setActivePath, closeTab, updateTabContent,
+    saveActiveTab, saveAllTabs, diffChange, setDiffChange, loadWorktree, pushToast,
+  } =
     useIde();
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
   const [lspStatus, setLspStatus] = useState("idle"); // idle | connecting | ready | error
+  const [peekHunk, setPeekHunk] = useState(null);
 
   const activeTab = tabs.find((t) => t.path === activePath);
 
@@ -73,6 +78,51 @@ export default function EditorArea() {
     defineBobTheme(monaco);
   }, []);
 
+  const handleDiffMount = useCallback((editor, monaco) => {
+    const modified = editor.getModifiedEditor?.();
+    if (!modified || !diffChange?.hunks?.length) return;
+    const decorations = diffChange.hunks.map((hunk) => {
+      const kind = diffChange.status === "conflict"
+        ? "conflict"
+        : diffChange.source === "bob_model"
+          ? "proposal"
+          : hunk.diff.includes("\n-")
+            ? "modified"
+            : "added";
+      return {
+        range: new monaco.Range(hunk.new_start || 1, 1, Math.max(hunk.new_start || 1, (hunk.new_start || 1) + Math.max(0, (hunk.new_lines || 1) - 1)), 1),
+        options: {
+          isWholeLine: true,
+          glyphMarginClassName: `hunk-glyph hunk-glyph-${kind}`,
+          linesDecorationsClassName: `hunk-line hunk-line-${kind}`,
+          hoverMessage: { value: `${hunk.hunk_id} - ${hunk.status || "pending"}` },
+        },
+      };
+    });
+    modified.createDecorationsCollection?.(decorations);
+  }, [diffChange]);
+
+  const runHunkAction = async (operation, message) => {
+    if (!diffChange) return;
+    try {
+      await operation();
+      await loadWorktree(currentProject);
+      pushToast(message);
+      setDiffChange(null);
+    } catch (error) {
+      pushToast(error.message, "error");
+    }
+  };
+
+  const copyHunk = async (hunk) => {
+    try {
+      await navigator.clipboard.writeText(hunk.diff);
+      pushToast(`Copied ${hunk.hunk_id}`);
+    } catch {
+      pushToast(hunk.diff);
+    }
+  };
+
   // Wire LSP — only active when Monaco + editor are mounted and a project is selected
   useLsp({
     monaco: monacoRef.current,
@@ -98,7 +148,7 @@ export default function EditorArea() {
 
       <div className="editor-host">
         {diffChange ? (
-          <div className="diff-editor-shell">
+          <div className="diff-editor-shell" key={diffChange.change_id}>
             <div className="diff-editor-header">
               <span>{diffChange.path}</span>
               <span className={`review-verdict review-${(diffChange.review_status || "").toLowerCase()}`}>
@@ -106,21 +156,71 @@ export default function EditorArea() {
               </span>
               <button title="Close Diff" onClick={() => setDiffChange(null)}><X size={15} /></button>
             </div>
-            <DiffEditor
-              original={diffChange.before_content}
-              modified={diffChange.after_content}
-              language={extToLang(diffChange.path)}
-              theme="bob-dark"
-              beforeMount={handleBeforeMount}
-              options={{
-                readOnly: true,
-                renderSideBySide: true,
-                automaticLayout: true,
-                fontSize: 13,
-                minimap: { enabled: false },
-                scrollBeyondLastLine: false,
-              }}
-            />
+            {(diffChange.large_file || diffChange.binary_file) ? (
+              <div className="diff-fallback">
+                <strong>{diffChange.safe_message || diffChange.diff}</strong>
+                <p>Bob tracks this file as metadata only. Full content is not loaded into the diff viewer.</p>
+              </div>
+            ) : (
+              <>
+                {!!diffChange.hunks?.length && (
+                  <div className="hunk-toolbar">
+                    {diffChange.hunks.map((hunk) => (
+                      <div key={hunk.hunk_id} className={`hunk-chip hunk-${hunk.status || "pending"}`}>
+                        <button title="Preview Hunk" onClick={() => setPeekHunk(hunk)}><Eye size={13} /> {hunk.hunk_id}</button>
+                        {diffChange.source === "bob_model" ? (
+                          <>
+                            <button title="Apply Hunk" onClick={() => runHunkAction(
+                              () => api.worktreeApplyHunk(currentProject, diffChange.change_id, hunk.hunk_id),
+                              `Applied ${hunk.hunk_id}`
+                            )}><Check size={13} /></button>
+                            <button title="Apply All Hunks" onClick={() => runHunkAction(
+                              () => api.worktreeApplyAllHunks(currentProject, diffChange.change_id),
+                              "Applied all hunks"
+                            )}><Layers size={13} /></button>
+                          </>
+                        ) : (
+                          <>
+                            <button title="Stage Hunk" onClick={() => runHunkAction(
+                              () => api.worktreeStageHunk(currentProject, diffChange.change_id, hunk.hunk_id),
+                              `Staged ${hunk.hunk_id}`
+                            )}><Check size={13} /></button>
+                            <button title="Discard Hunk" onClick={() => runHunkAction(
+                              () => api.worktreeDiscardHunk(currentProject, diffChange.change_id, hunk.hunk_id),
+                              `Discarded ${hunk.hunk_id}`
+                            )}><Minus size={13} /></button>
+                          </>
+                        )}
+                        <button title="Copy Hunk" onClick={() => copyHunk(hunk)}><Clipboard size={13} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {peekHunk && (
+                  <div className="hunk-peek">
+                    <div><strong>{peekHunk.hunk_id}</strong><button onClick={() => setPeekHunk(null)}><X size={13} /></button></div>
+                    <pre>{peekHunk.diff}</pre>
+                  </div>
+                )}
+                <DiffEditor
+                  original={diffChange.before_content}
+                  modified={diffChange.after_content}
+                  language={extToLang(diffChange.path)}
+                  theme="bob-dark"
+                  beforeMount={handleBeforeMount}
+                  onMount={handleDiffMount}
+                  options={{
+                    readOnly: true,
+                    renderSideBySide: true,
+                    automaticLayout: true,
+                    fontSize: 13,
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    glyphMargin: true,
+                  }}
+                />
+              </>
+            )}
           </div>
         ) : activeTab ? (
           <Editor

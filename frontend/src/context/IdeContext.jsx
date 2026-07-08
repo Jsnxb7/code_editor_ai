@@ -185,6 +185,37 @@ export function IdeProvider({ children }) {
     return status;
   }, []);
 
+  const sourceControlIndex = useMemo(() => {
+    const byPath = new Map();
+    const folderCounts = new Map();
+    for (const group of ["conflicts", "proposed", "changes", "staged"]) {
+      for (const change of worktreeStatus?.[group] || []) {
+        if (!byPath.has(change.path)) byPath.set(change.path, decorationFor(group, change));
+        const parts = change.path.split("/");
+        for (let index = 1; index < parts.length; index += 1) {
+          const folder = parts.slice(0, index).join("/");
+          folderCounts.set(folder, (folderCounts.get(folder) || 0) + 1);
+        }
+      }
+    }
+    return { byPath, folderCounts };
+  }, [worktreeStatus]);
+
+  const sourceControlTotal = useMemo(
+    () => Object.values(worktreeStatus?.summary || {}).reduce((sum, value) => sum + value, 0),
+    [worktreeStatus]
+  );
+
+  const getSourceDecoration = useCallback(
+    (path) => sourceControlIndex.byPath.get(path) || null,
+    [sourceControlIndex]
+  );
+
+  const getFolderChangeCount = useCallback(
+    (path) => sourceControlIndex.folderCounts.get(path) || 0,
+    [sourceControlIndex]
+  );
+
   useEffect(() => {
     if (!currentProject) return undefined;
     const socket = getSocket();
@@ -194,7 +225,10 @@ export function IdeProvider({ children }) {
     const onWorkspaceChanged = ({ project, paths = [] }) => {
       if (project !== currentProject) return;
       clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => loadTree(currentProject), 40);
+      refreshTimer = setTimeout(() => {
+        loadTree(currentProject);
+        loadWorktree(currentProject).catch(() => {});
+      }, 40);
       setTabs((currentTabs) => {
         for (const tab of currentTabs) {
           if (!tab.dirty && paths.includes(tab.path)) {
@@ -263,11 +297,12 @@ export function IdeProvider({ children }) {
     const data = await api.createWorkspace(name);
     await loadWorkspaces(data.project);
     await loadTree(data.project);
+    await loadWorktree(data.project);
     setTabs([]);
     setActivePath(null);
     pushToast(`Created workspace "${data.project}"`);
     return data.project;
-  }, [loadWorkspaces, loadTree, pushToast]);
+  }, [loadWorkspaces, loadTree, loadWorktree, pushToast]);
 
   const openWorkspaceFolder = useCallback(async () => {
     if (!window.showDirectoryPicker) {
@@ -301,12 +336,13 @@ export function IdeProvider({ children }) {
     const data = await api.importWorkspace(dirHandle.name, files, folders);
     await loadWorkspaces(data.project);
     await loadTree(data.project);
+    await loadWorktree(data.project);
     setTabs([]);
     setActivePath(null);
     setProblems([]);
     setSearchResults(null);
     pushToast(`Opened folder "${data.project}" (${data.files} files)`);
-  }, [tabs, confirmDialog, loadWorkspaces, loadTree, pushToast]);
+  }, [tabs, confirmDialog, loadWorkspaces, loadTree, loadWorktree, pushToast]);
 
   // ---- tabs / files ----
   const openFile = useCallback(
@@ -367,12 +403,13 @@ export function IdeProvider({ children }) {
       const tab = tabs.find((t) => t.path === path);
       if (!tab) return;
       await api.saveFile(currentProject, path, tab.content);
+      await loadWorktree(currentProject);
       setTabs((prev) =>
         prev.map((t) => (t.path === path ? { ...t, savedContent: t.content, dirty: false } : t))
       );
       pushToast(`Saved ${path}`);
     },
-    [tabs, currentProject, pushToast]
+    [tabs, currentProject, loadWorktree, pushToast]
   );
 
   const saveActiveTab = useCallback(() => {
@@ -386,12 +423,13 @@ export function IdeProvider({ children }) {
       await api.saveFile(currentProject, tab.path, tab.content);
     }
     if (dirtyTabs.length) {
+      await loadWorktree(currentProject);
       setTabs((prev) =>
         prev.map((t) => (t.dirty ? { ...t, savedContent: t.content, dirty: false } : t))
       );
       pushToast(`Saved ${dirtyTabs.length} file${dirtyTabs.length === 1 ? "" : "s"}`);
     }
-  }, [tabs, currentProject, pushToast]);
+  }, [tabs, currentProject, loadWorktree, pushToast]);
 
   const saveWorkspaceToFolder = useCallback(async () => {
     if (!window.showDirectoryPicker) {
@@ -424,10 +462,11 @@ export function IdeProvider({ children }) {
     async (path) => {
       await api.createFile(currentProject, path);
       await loadTree(currentProject);
+      await loadWorktree(currentProject);
       await openFile(path);
       pushToast(`Created ${path}`);
     },
-    [currentProject, loadTree, openFile, pushToast]
+    [currentProject, loadTree, loadWorktree, openFile, pushToast]
   );
 
   const createFolder = useCallback(
@@ -445,9 +484,10 @@ export function IdeProvider({ children }) {
       setTabs((prev) => prev.filter((t) => t.path !== path && !t.path.startsWith(path + "/")));
       if (activePath === path || activePath?.startsWith(path + "/")) setActivePath(null);
       await loadTree(currentProject);
+      await loadWorktree(currentProject);
       pushToast(`Deleted ${path}`);
     },
-    [currentProject, activePath, loadTree, pushToast]
+    [currentProject, activePath, loadTree, loadWorktree, pushToast]
   );
 
   const renameEntry = useCallback(
@@ -456,9 +496,10 @@ export function IdeProvider({ children }) {
       setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, path: newPath } : t)));
       if (activePath === path) setActivePath(newPath);
       await loadTree(currentProject);
+      await loadWorktree(currentProject);
       pushToast(`Renamed to ${newPath}`);
     },
-    [currentProject, activePath, loadTree, pushToast]
+    [currentProject, activePath, loadTree, loadWorktree, pushToast]
   );
 
   const refreshTree = useCallback(() => loadTree(currentProject), [loadTree, currentProject]);
@@ -550,6 +591,9 @@ export function IdeProvider({ children }) {
       problems,
       searchResults,
       worktreeStatus,
+      sourceControlTotal,
+      getSourceDecoration,
+      getFolderChangeCount,
       diffChange,
       setDiffChange,
       sidebarView,
@@ -612,6 +656,9 @@ export function IdeProvider({ children }) {
       problems,
       searchResults,
       worktreeStatus,
+      sourceControlTotal,
+      getSourceDecoration,
+      getFolderChangeCount,
       diffChange,
       sidebarView,
       bottomTab,
