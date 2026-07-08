@@ -54,6 +54,8 @@ from bob_core.json_worktree import (
     unstage_change,
 )
 from bob_core.model_service import model_run_status, start_model_run
+from bob_core.colab_adapter import ColabAdapter
+from bob_core.model_config import read_model_config, save_model_config
 from workspace_tools import search_workspace
 
 Capability = Callable[..., Any]
@@ -104,7 +106,9 @@ def system_status() -> dict:
     return {
         "service": "Bob IDE",
         "mcp": True,
-        "realtime": ["terminal", "workspace", "editor", "lsp"],
+        "realtime": ["terminal", "workspace", "editor", "lsp", "worktree", "model"],
+        "command_plane": "MCP capability registry",
+        "source_control": "JSON worktree",
     }
 
 
@@ -299,19 +303,69 @@ def test_pytest(project: str = "sample_project") -> dict:
     return run_pytest(project)
 
 
+def _limited_model_context(project: str, active_path: str | None = None, budget: int = 160_000) -> dict:
+    """Build the same lightweight context shape used by MCP/model calls."""
+    paths = []
+    try:
+        paths = [item for item in scan_tree(project).get("children", [])]
+    except Exception:
+        paths = []
+    from bob_core.file_manager import list_files
+
+    file_paths = list_files(project)
+    ordered = []
+    if active_path and active_path in file_paths:
+        ordered.append(active_path)
+    ordered.extend(path for path in file_paths if path not in ordered)
+    files: dict[str, str] = {}
+    total = 0
+    for path in ordered:
+        try:
+            content = read_file(project, path)["content"]
+        except Exception:
+            continue
+        if total + len(content) > budget:
+            break
+        files[path] = content
+        total += len(content)
+    return {"workspace_tree": scan_tree(project), "files": files}
+
+
 @capability("assistant.chat")
-def assistant_chat(message: str, active_path: str | None = None) -> dict:
-    """Return the current Bob assistant response."""
+def assistant_chat(message: str, project: str = "sample_project", active_path: str | None = None) -> dict:
+    """Chat through the shared MCP capability layer.
+
+    If a Colab endpoint is configured, the chat mode asks the planner endpoint
+    for a structured coding answer without creating file proposals. Without
+    Colab, it returns a useful local response explaining how to run Plan/Run.
+    """
     message = message.strip()
     if not message:
         raise ValueError("Message is required")
-    context_note = f' (looking at "{active_path}")' if active_path else ""
+    adapter = ColabAdapter()
+    if adapter.configured:
+        payload = {
+            "run_id": "chat_preview",
+            "project": project,
+            "user_prompt": message,
+            "active_path": active_path,
+            **_limited_model_context(project, active_path),
+        }
+        plan = adapter.plan(payload)
+        reply = plan.get("summary") or "I prepared a plan for this request."
+        if plan.get("files_needed"):
+            reply += "\n\nLikely files: " + ", ".join(plan["files_needed"])
+        if plan.get("coder_prompt"):
+            reply += "\n\nNext step: switch to Run mode to create reviewable proposals."
+        return {"reply": reply, "plan": plan, "provider": "colab"}
+    context_note = f' while looking at `{active_path}`' if active_path else ""
     return {
         "reply": (
-            "Bob isn't connected to an AI model yet, so this is a placeholder reply"
-            f"{context_note}. Connect a model in the assistant.chat capability to "
-            "enable real responses."
-        )
+            f"I am routed through the MCP capability layer{context_note}. "
+            "Set BOB_COLAB_BASE_URL to enable live model chat, or use Plan/Run to queue a Colab-powered model job. "
+            "All generated edits will appear as Source Control proposals before they touch files."
+        ),
+        "provider": "local_contract_stub",
     }
 
 
@@ -572,6 +626,56 @@ def worktree_ignore_path(project: str, path: str) -> dict:
 @capability("worktree.timeline")
 def worktree_timeline(project: str) -> dict:
     return get_timeline(project)
+
+
+
+
+@capability("model.get_config")
+def model_get_config() -> dict:
+    """Return the current Colab/model connection config, with secrets masked."""
+    return read_model_config(include_secret=False)
+
+
+@capability("model.set_config")
+def model_set_config(
+    base_url: str | None = None,
+    plan_path: str | None = None,
+    run_path: str | None = None,
+    timeout: int | str | None = None,
+    token: str | None = None,
+    headers_json: str | dict | None = None,
+) -> dict:
+    """Persist Colab/model connection settings used by Bob chat and model runs."""
+    config = save_model_config(base_url, plan_path, run_path, timeout, token, headers_json)
+    _publish("model:config", {"project": "*", "config": config})
+    return config
+
+
+@capability("model.health")
+def model_health() -> dict:
+    """Check whether the configured Colab endpoint is reachable."""
+    import json
+    import urllib.error
+    import urllib.request
+
+    config = read_model_config(include_secret=True)
+    if not config.get("base_url"):
+        return {"configured": False, "ok": False, "message": "No Colab base URL configured."}
+    url = config["base_url"].rstrip("/") + "/health"
+    headers = {}
+    if config.get("token"):
+        headers["Authorization"] = f"Bearer {config['token']}"
+    try:
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        with urllib.request.urlopen(req, timeout=min(int(config.get("timeout") or 600), 20)) as response:
+            body = response.read().decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            payload = {"raw": body[:500]}
+        return {"configured": True, "ok": True, "url": url, "response": payload}
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return {"configured": True, "ok": False, "url": url, "message": str(exc)}
 
 
 @capability("model.plan")

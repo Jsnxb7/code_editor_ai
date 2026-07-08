@@ -79,6 +79,46 @@ def worktree_snapshot():
     return _worktree_post("worktree.create_snapshot")
 
 
+
+@api_bp.post("/worktree/stage-all")
+def worktree_stage_all():
+    return _worktree_post("worktree.stage_all")
+
+
+@api_bp.post("/worktree/unstage-all")
+def worktree_unstage_all():
+    return _worktree_post("worktree.unstage_all")
+
+
+@api_bp.post("/worktree/apply-all")
+def worktree_apply_all():
+    return _worktree_post("worktree.apply_all")
+
+
+@api_bp.post("/worktree/discard-all")
+def worktree_discard_all():
+    return _worktree_post("worktree.discard_all")
+
+
+@api_bp.get("/worktree/timeline")
+def worktree_timeline():
+    try:
+        return ok(invoke("worktree.timeline", {"project": request.args.get("project", "sample_project")}))
+    except Exception as exc:
+        return fail(exc)
+
+
+@api_bp.get("/model/run-status")
+def model_run_status():
+    try:
+        return ok(invoke("model.run_status", {
+            "project": request.args.get("project", "sample_project"),
+            "run_id": request.args.get("run_id", ""),
+        }))
+    except Exception as exc:
+        return fail(exc)
+
+
 @api_bp.get("/worktree/history")
 def worktree_history():
     try:
@@ -228,6 +268,7 @@ def bob_chat():
     data = request.get_json(force=True)
     try:
         return ok(invoke("assistant.chat", {
+            "project": data.get("project", "sample_project"),
             "message": data.get("message", ""),
             "active_path": data.get("activePath"),
         }))

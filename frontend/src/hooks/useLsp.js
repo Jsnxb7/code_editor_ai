@@ -223,6 +223,8 @@ export function useLsp({ monaco, editor, project, filePath, fileContent }) {
       });
     });
 
+    const openedDocuments = openedRef.current;
+
     // ── cleanup ──
     return () => {
       try { notify("shutdown", {}); } catch {}
@@ -233,7 +235,7 @@ export function useLsp({ monaco, editor, project, filePath, fileContent }) {
       referencesDispose.dispose();
       changeDispose.dispose();
       socket.disconnect();
-      openedRef.current.clear();
+      openedDocuments.clear();
     };
   // Re-run only when the core objects change
   // eslint-disable-next-line react-hooks/exhaustive-deps

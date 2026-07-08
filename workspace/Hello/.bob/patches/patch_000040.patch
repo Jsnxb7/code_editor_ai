@@ -1,0 +1,21 @@
+--- a/app.py
++++ b/app.py
+@@ -1,9 +1,6 @@
+ from flask import Flask, render_template
+ 
+-
+-
+ app = Flask(__name__)
+-
+ 
+ 
+ @app.route("/")
+@@ -11,8 +8,6 @@
+ def home():
+ 
+     return render_template("index.html")
+-
+-
+ 
+ if __name__ == "__main__":
+ 

@@ -1239,3 +1239,211 @@ body.resizing-y { cursor: row-resize; }
   min-width: 90px;
   text-align: center;
 }
+
+/* ---------- Major update polish ---------- */
+.bob-toolchain-note {
+  margin: -2px 10px 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, rgba(245,166,35,.08), rgba(77,217,236,.05));
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.context-menu-item.danger { color: var(--red); }
+.status-button { cursor: pointer; }
+.status-button:hover { color: var(--amber); }
+.review-pass, .status-pass { color: var(--green); }
+.review-fail, .status-fail { color: var(--red); }
+.risk-low { color: var(--green); }
+.risk-medium { color: var(--yellow); }
+.risk-high { color: var(--red); }
+.hunk-glyph-added { background: var(--green); }
+.hunk-glyph-modified { background: var(--cyan); }
+.hunk-glyph-conflict { background: var(--red); }
+.hunk-glyph-proposal { background: var(--amber); }
+
+/* ---------- Bob model connection + AI IDE polish ---------- */
+.bob-connection-card {
+  margin: 0 10px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: #101218;
+  overflow: hidden;
+}
+.bob-connection-title {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.bob-connection-title:hover { background: var(--surface-2); color: var(--text); }
+.bob-connection-title span:last-child {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.connection-ok { color: var(--green); }
+.connection-warn { color: var(--yellow); }
+.connection-off { color: var(--text-3); }
+.bob-connection-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+.bob-connection-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+.bob-connection-body input {
+  width: 100%;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  outline: none;
+}
+.bob-connection-body input:focus {
+  border-color: var(--amber);
+  box-shadow: 0 0 0 1px rgba(245,166,35,.16);
+}
+.bob-connection-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.bob-checkbox-row {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 7px !important;
+}
+.bob-checkbox-row input { width: auto; height: auto; }
+.bob-connection-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+.bob-connection-actions button,
+.bob-open-scm {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+.bob-connection-actions button:hover:not(:disabled),
+.bob-open-scm:hover { color: var(--amber); border-color: var(--amber); }
+.bob-connection-actions button:disabled { opacity: .4; cursor: default; }
+.bob-health-box {
+  padding: 6px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--border-soft);
+  font-size: 11px;
+  color: var(--text-2);
+}
+.bob-health-box.ok { border-color: rgba(82,214,138,.35); color: var(--green); background: rgba(82,214,138,.08); }
+.bob-health-box.fail { border-color: rgba(245,96,96,.35); color: var(--red); background: rgba(245,96,96,.08); }
+.bob-open-scm { width: 100%; margin-top: 6px; }
+
+/* ---------- VS Code-like source control refinements ---------- */
+.vscode-scm-panel { background: #181818; }
+.scm-repo-row {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 8px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+.scm-repo-row small {
+  margin-left: auto;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vscode-scm-summary {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.vscode-checkpoint-box textarea {
+  background: #1f1f1f;
+  border-radius: 2px;
+  min-height: 44px;
+}
+.vscode-scm-toolbar {
+  grid-template-columns: 1fr 1fr;
+  padding-top: 2px;
+}
+.vscode-scm-row {
+  border-left: 2px solid transparent;
+}
+.vscode-scm-row.selected {
+  background: #04395e;
+  color: #fff;
+  border-left-color: var(--amber);
+}
+.vscode-scm-row.selected .scm-change-meta { color: rgba(255,255,255,.66); }
+.scm-section-conflict .scm-section-header { color: var(--yellow); }
+.scm-section-proposed .scm-section-header { color: #c795ff; }
+.scm-section-staged .scm-section-header { color: var(--green); }
+.scm-empty-group {
+  padding: 5px 10px 8px 34px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-style: italic;
+}
+.scm-clean-state {
+  margin: 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.diff-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.diff-header-actions button {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--text-2);
+}
+.diff-header-actions button:hover { background: var(--surface-3); color: var(--amber); }
+.diff-editor-shell .monaco-diff-editor,
+.diff-editor-shell .monaco-editor,
+.diff-editor-shell .overflow-guard {
+  min-height: 0;
+}

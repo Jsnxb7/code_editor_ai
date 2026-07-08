@@ -3,13 +3,15 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Clock3,
   Clipboard,
+  FileCode2,
   FileDiff,
-  GitPullRequest,
+  GitBranch,
   History,
   Minus,
-  RotateCcw,
   RefreshCw,
+  RotateCcw,
   Save,
   ShieldAlert,
   Sparkles,
@@ -20,11 +22,12 @@ import { api } from "../api";
 import { useIde } from "../context/IdeContext";
 
 const ACTION_LABEL = { add: "A", modify: "M", delete: "D", rename: "R" };
+const ACTION_TEXT = { add: "Added", modify: "Modified", delete: "Deleted", rename: "Renamed" };
 const GROUPS = [
-  { key: "conflicts", title: "Conflicts", warning: true },
-  { key: "proposed", title: "Proposed by Bob" },
-  { key: "changes", title: "Changes" },
-  { key: "staged", title: "Staged Changes" },
+  { key: "conflicts", title: "MERGE CHANGES", icon: AlertTriangle, className: "conflict" },
+  { key: "proposed", title: "PROPOSED BY BOB", icon: Sparkles, className: "proposed" },
+  { key: "changes", title: "CHANGES", icon: FileDiff, className: "changed" },
+  { key: "staged", title: "STAGED CHANGES", icon: Check, className: "staged" },
 ];
 
 function IconButton({ title, onClick, children, danger = false, disabled = false }) {
@@ -35,7 +38,7 @@ function IconButton({ title, onClick, children, danger = false, disabled = false
       disabled={disabled}
       onClick={(event) => {
         event.stopPropagation();
-        onClick();
+        onClick?.();
       }}
     >
       {children}
@@ -46,34 +49,31 @@ function IconButton({ title, onClick, children, danger = false, disabled = false
 function matchesFilter(change, filter) {
   const query = filter.trim().toLowerCase();
   if (!query) return true;
-  const fields = [
-    change.path,
-    change.status,
-    change.source,
-    change.run_id,
-    change.action,
-    change.review_status,
-    change.risk,
-  ].filter(Boolean).map((value) => String(value).toLowerCase());
   if (query.startsWith("source:")) return change.source?.toLowerCase().includes(query.slice(7));
   if (query.startsWith("status:")) return change.status?.toLowerCase().includes(query.slice(7));
   if (query.startsWith("risk:")) return change.risk?.toLowerCase().includes(query.slice(5));
   if (query.startsWith("run:")) return change.run_id?.toLowerCase().includes(query.slice(4));
-  return fields.some((value) => value.includes(query));
+  return [change.path, change.status, change.source, change.run_id, change.action, change.review_status, change.risk]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(query));
 }
 
 function sortChanges(items, sortMode) {
+  const riskRank = { high: 0, medium: 1, low: 2 };
   return [...items].sort((a, b) => {
     if (sortMode === "source") return `${a.source || ""}${a.path}`.localeCompare(`${b.source || ""}${b.path}`);
     if (sortMode === "run") return `${a.run_id || ""}${a.path}`.localeCompare(`${b.run_id || ""}${b.path}`);
-    if (sortMode === "risk") return `${a.risk || "zz"}${a.path}`.localeCompare(`${b.risk || "zz"}${b.path}`);
+    if (sortMode === "risk") return (riskRank[a.risk] ?? 9) - (riskRank[b.risk] ?? 9) || a.path.localeCompare(b.path);
     if (sortMode === "status") return `${a.status}${a.path}`.localeCompare(`${b.status}${b.path}`);
     return a.path.localeCompare(b.path);
   });
 }
 
-function ChangeRow({ change, group, onRefresh, onHistory, onIgnore }) {
+function ChangeRow({ change, group, selected, onSelect, onRefresh, onHistory, onIgnore }) {
   const { currentProject, openFile, setDiffChange, pushToast, confirmDialog } = useIde();
+  const marker = group === "proposed" ? "P" : group === "conflicts" ? "C" : ACTION_LABEL[change.action] || "M";
+  const canApply = group === "proposed" && change.review_status !== "FAIL";
+  const needsOverride = group === "conflicts" || (group === "proposed" && change.review_status === "FAIL");
 
   const run = async (operation, success) => {
     try {
@@ -89,14 +89,20 @@ function ChangeRow({ change, group, onRefresh, onHistory, onIgnore }) {
 
   const openDiff = async () => {
     try {
-      setDiffChange(await api.worktreeDiff(currentProject, change.change_id));
+      const diff = await api.worktreeDiff(currentProject, change.change_id);
+      setDiffChange(diff);
+      onSelect(change.change_id);
     } catch (error) {
       pushToast(error.message, "error");
     }
   };
 
   const discard = async () => {
-    const ok = await confirmDialog(`Discard "${change.path}"? This cannot be undone unless a checkpoint exists.`);
+    const ok = await confirmDialog(
+      group === "proposed"
+        ? `Discard Bob proposal for "${change.path}"?`
+        : `Discard changes to "${change.path}"? This cannot be undone unless a checkpoint exists.`
+    );
     if (!ok) return;
     run(() => api.worktreeDiscard(currentProject, change.change_id), `Discarded ${change.path}`);
   };
@@ -110,77 +116,76 @@ function ChangeRow({ change, group, onRefresh, onHistory, onIgnore }) {
     }
   };
 
-  const canApply = group === "proposed" && change.review_status !== "FAIL";
-  const needsOverride = group === "conflicts" || (group === "proposed" && change.review_status === "FAIL");
-
   return (
-    <div className="scm-change-row" onClick={openDiff} onDoubleClick={() => openFile(change.path)} title={change.path}>
-      <span className={`scm-decoration scm-row-marker ${group === "conflicts" ? "status-conflict" : group === "proposed" ? "status-proposed" : group === "staged" ? "status-staged" : "status-changed"}`}>
-        {group === "proposed" ? "P" : group === "conflicts" ? "C" : ACTION_LABEL[change.action] || "M"}
+    <div
+      className={`scm-change-row vscode-scm-row ${selected ? "selected" : ""}`}
+      onClick={openDiff}
+      onDoubleClick={() => openFile(change.path).catch((error) => pushToast(error.message, "error"))}
+      title="Click to open diff. Double-click to open file."
+    >
+      <span className={`scm-decoration scm-row-marker status-${group === "conflicts" ? "conflict" : group === "proposed" ? "proposed" : group === "staged" ? "staged" : "changed"}`}>
+        {marker}
       </span>
       <div className="scm-change-main">
         <div className="scm-change-path">{change.path}</div>
         <div className="scm-change-meta">
-          <span>{change.action}</span>
+          <span>{ACTION_TEXT[change.action] || change.action}</span>
+          {!!change.hunks?.length && <span>{change.hunks.length} hunk{change.hunks.length === 1 ? "" : "s"}</span>}
           {change.run_id && <span>{change.run_id}</span>}
           {change.review_status && <span className={`review-${change.review_status.toLowerCase()}`}>{change.review_status}</span>}
-        {change.risk && <span className={`risk-${change.risk}`}>{change.risk} risk</span>}
+          {change.risk && <span className={`risk-${change.risk}`}>{change.risk}</span>}
           {change.partial_state && <span>{change.partial_state}</span>}
-          {change.large_file && <span>large file</span>}
-          {change.binary_file && <span>binary file</span>}
+          {change.large_file && <span>large</span>}
+          {change.binary_file && <span>binary</span>}
         </div>
       </div>
       <div className="scm-row-actions">
         <IconButton title="Open Diff" onClick={openDiff}><FileDiff size={14} /></IconButton>
+        <IconButton title="Open File" onClick={() => openFile(change.path).catch((error) => pushToast(error.message, "error"))}><FileCode2 size={14} /></IconButton>
         {group === "changes" && (
-          <IconButton title="Stage Change" onClick={() => run(
-            () => api.worktreeStage(currentProject, change.change_id), `Staged ${change.path}`
-          )}><Check size={14} /></IconButton>
+          <IconButton title="Stage Change" onClick={() => run(() => api.worktreeStage(currentProject, change.change_id), `Staged ${change.path}`)}><Check size={14} /></IconButton>
         )}
         {group === "staged" && (
-          <IconButton title="Unstage Change" onClick={() => run(
-            () => api.worktreeUnstage(currentProject, change.change_id), `Unstaged ${change.path}`
-          )}><Minus size={14} /></IconButton>
+          <IconButton title="Unstage Change" onClick={() => run(() => api.worktreeUnstage(currentProject, change.change_id), `Unstaged ${change.path}`)}><Minus size={14} /></IconButton>
         )}
         {canApply && (
-          <IconButton title="Apply Proposal" onClick={() => run(
-            () => api.worktreeApply(currentProject, change.change_id), `Applied ${change.path}`
-          )}><Check size={14} /></IconButton>
+          <IconButton title="Apply Bob Proposal" onClick={() => run(() => api.worktreeApply(currentProject, change.change_id), `Applied ${change.path}`)}><Check size={14} /></IconButton>
         )}
         {needsOverride && (
-          <IconButton title="Override and Apply" onClick={async () => {
+          <IconButton title="Override Safeguards and Apply" onClick={async () => {
             const ok = await confirmDialog(`Override safeguards and apply "${change.path}"?`);
             if (!ok) return;
             run(() => api.worktreeOverrideApply(currentProject, change.change_id), `Override applied ${change.path}`);
           }}><ShieldAlert size={14} /></IconButton>
         )}
         <IconButton title="View File History" onClick={() => onHistory(change.path)}><History size={14} /></IconButton>
-        <IconButton title="Ignore Path" onClick={() => onIgnore(change.path)}><X size={14} /></IconButton>
         <IconButton title="Copy Path" onClick={copyPath}><Clipboard size={14} /></IconButton>
-        <IconButton title={group === "proposed" ? "Discard Proposal" : "Discard Change"} onClick={discard} danger>
-          <X size={14} />
-        </IconButton>
+        <IconButton title="Add to .bobignore" onClick={() => onIgnore(change.path)}><X size={14} /></IconButton>
+        <IconButton title={group === "proposed" ? "Discard Proposal" : "Discard Change"} onClick={discard} danger><RotateCcw size={14} /></IconButton>
       </div>
     </div>
   );
 }
 
-function ChangeSection({ title, group, items, onRefresh, onHistory, onIgnore, warning = false }) {
+function ChangeSection({ definition, items, selectedId, onSelect, onRefresh, onHistory, onIgnore }) {
   const [open, setOpen] = useState(true);
-  if (!items.length) return null;
+  const Icon = definition.icon;
   return (
-    <section className="scm-section">
+    <section className={`scm-section scm-section-${definition.className}`}>
       <button className="scm-section-header" onClick={() => setOpen((value) => !value)}>
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        {warning && <AlertTriangle size={13} />}
-        <span>{title}</span>
+        <Icon size={13} />
+        <span>{definition.title}</span>
         <span className="scm-count">{items.length}</span>
       </button>
+      {open && items.length === 0 && <div className="scm-empty-group">No {definition.title.toLowerCase()}</div>}
       {open && items.map((change) => (
         <ChangeRow
           key={change.change_id}
           change={change}
-          group={group}
+          group={definition.key}
+          selected={selectedId === change.change_id}
+          onSelect={onSelect}
           onRefresh={onRefresh}
           onHistory={onHistory}
           onIgnore={onIgnore}
@@ -191,7 +196,15 @@ function ChangeSection({ title, group, items, onRefresh, onHistory, onIgnore, wa
 }
 
 export default function SourceControlPanel() {
-  const { currentProject, worktreeStatus, sourceControlTotal, loadWorktree, pushToast, confirmDialog } = useIde();
+  const {
+    currentProject,
+    worktreeStatus,
+    sourceControlTotal,
+    loadWorktree,
+    loadTree,
+    pushToast,
+    confirmDialog,
+  } = useIde();
   const [history, setHistory] = useState(null);
   const [timeline, setTimeline] = useState(null);
   const [fileHistory, setFileHistory] = useState(null);
@@ -199,11 +212,14 @@ export default function SourceControlPanel() {
   const [filter, setFilter] = useState("");
   const [sortMode, setSortMode] = useState("path");
   const [checkpointMessage, setCheckpointMessage] = useState("");
+  const [selectedId, setSelectedId] = useState(null);
 
   const refresh = async () => {
     const status = await loadWorktree(currentProject);
-    if (historyOpen) setHistory(await api.worktreeHistory(currentProject));
-    if (historyOpen) setTimeline(await api.worktreeTimeline(currentProject));
+    if (historyOpen) {
+      setHistory(await api.worktreeHistory(currentProject));
+      setTimeline(await api.worktreeTimeline(currentProject));
+    }
     return status;
   };
 
@@ -223,10 +239,7 @@ export default function SourceControlPanel() {
   const grouped = useMemo(() => {
     const result = {};
     for (const group of GROUPS) {
-      result[group.key] = sortChanges(
-        (worktreeStatus?.[group.key] || []).filter((change) => matchesFilter(change, filter)),
-        sortMode
-      );
+      result[group.key] = sortChanges((worktreeStatus?.[group.key] || []).filter((change) => matchesFilter(change, filter)), sortMode);
     }
     return result;
   }, [filter, sortMode, worktreeStatus]);
@@ -239,6 +252,7 @@ export default function SourceControlPanel() {
     try {
       await operation();
       await refresh();
+      await loadTree(currentProject);
       pushToast(success);
     } catch (error) {
       pushToast(error.message, "error");
@@ -246,15 +260,9 @@ export default function SourceControlPanel() {
   };
 
   const createCheckpoint = async () => {
-    if (!stagedCount) {
-      pushToast("Stage changes before creating a checkpoint.", "error");
-      return;
-    }
+    if (!stagedCount) return pushToast("Stage changes before creating a checkpoint.", "error");
     const message = checkpointMessage.trim();
-    if (!message) {
-      pushToast("Checkpoint message is required.", "error");
-      return;
-    }
+    if (!message) return pushToast("Checkpoint message is required.", "error");
     await runBulk(() => api.worktreeSnapshot(currentProject, message), `Created checkpoint "${message}"`);
     setCheckpointMessage("");
     setHistory(await api.worktreeHistory(currentProject));
@@ -263,7 +271,7 @@ export default function SourceControlPanel() {
   const discardAll = async () => {
     const ok = await confirmDialog("Discard all active Source Control changes and proposals?");
     if (!ok) return;
-    runBulk(() => api.worktreeDiscardAll(currentProject), "Discarded all changes");
+    await runBulk(() => api.worktreeDiscardAll(currentProject), "Discarded all changes");
   };
 
   const toggleHistory = async () => {
@@ -282,7 +290,7 @@ export default function SourceControlPanel() {
   const openFileHistory = async (path) => {
     try {
       setFileHistory(await api.worktreeFileHistory(currentProject, path));
-      setHistoryOpen(true);
+      if (!historyOpen) setHistoryOpen(true);
     } catch (error) {
       pushToast(error.message, "error");
     }
@@ -306,22 +314,54 @@ export default function SourceControlPanel() {
     await runBulk(() => api.worktreeRestoreFile(currentProject, path, snapshotId), `Restored ${path}`);
   };
 
+  if (!currentProject) {
+    return (
+      <aside className="sidebar source-control-panel">
+        <div className="sidebar-header">SOURCE CONTROL</div>
+        <div className="empty-hint">Open or create a workspace first.</div>
+      </aside>
+    );
+  }
+
   return (
-    <aside className="sidebar source-control-panel">
+    <aside className="sidebar source-control-panel vscode-scm-panel">
       <div className="sidebar-header scm-header">
         <span>SOURCE CONTROL</span>
         <div className="sidebar-header-actions">
           <button title="Refresh Source Control" onClick={() => refresh()}><RefreshCw size={14} /></button>
         </div>
       </div>
-      <div className="scm-summary">
-        <strong>{sourceControlTotal} changes</strong>
+
+      <div className="scm-repo-row">
+        <GitBranch size={14} />
+        <span>main</span>
+        <small>{worktreeStatus?.active_snapshot || "no checkpoint"}</small>
+      </div>
+
+      <div className="scm-summary vscode-scm-summary">
+        <strong>{sourceControlTotal} file{sourceControlTotal === 1 ? "" : "s"}</strong>
         <span>{summary.proposed || 0} proposed</span>
+        <span>{summary.changes || 0} changed</span>
         <span>{summary.staged || 0} staged</span>
         <span>{summary.conflicts || 0} conflicts</span>
       </div>
 
-      <div className="scm-toolbar">
+      <div className="scm-checkpoint-box vscode-checkpoint-box">
+        <textarea
+          value={checkpointMessage}
+          onChange={(event) => setCheckpointMessage(event.target.value)}
+          placeholder="Message (Ctrl+Enter to checkpoint staged changes)"
+          rows={3}
+          onKeyDown={(event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === "Enter") createCheckpoint();
+          }}
+        />
+        <button onClick={createCheckpoint} disabled={!stagedCount || !checkpointMessage.trim()}>
+          <Save size={14} /> Create Checkpoint
+        </button>
+      </div>
+
+      <div className="scm-toolbar vscode-scm-toolbar">
         <button onClick={() => runBulk(() => api.worktreeStageAll(currentProject), "Staged all changes")} disabled={!summary.changes}>
           <Check size={14} /> Stage All
         </button>
@@ -336,24 +376,8 @@ export default function SourceControlPanel() {
         </button>
       </div>
 
-      <div className="scm-checkpoint-box">
-        <textarea
-          value={checkpointMessage}
-          onChange={(event) => setCheckpointMessage(event.target.value)}
-          placeholder="Checkpoint message"
-          rows={3}
-        />
-        <button onClick={createCheckpoint} disabled={!stagedCount || !checkpointMessage.trim()}>
-          <Save size={14} /> Create Checkpoint
-        </button>
-      </div>
-
       <div className="scm-filter-row">
-        <input
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-          placeholder="Filter changed files..."
-        />
+        <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter: source:bob status:proposed risk:high" />
         <select value={sortMode} onChange={(event) => setSortMode(event.target.value)} title="Sort changes">
           <option value="path">Path</option>
           <option value="status">Status</option>
@@ -363,31 +387,24 @@ export default function SourceControlPanel() {
         </select>
       </div>
 
-      <div className="scm-git-placeholders">
-        <button disabled title="Git integration not enabled yet"><GitPullRequest size={13} /> Sync</button>
-        <button disabled title="Git integration not enabled yet">Push</button>
-        <button disabled title="Git integration not enabled yet">Pull</button>
-      </div>
-
       <div className="scm-scroll">
         {GROUPS.map((group) => (
           <ChangeSection
             key={group.key}
-            title={group.title}
-            group={group.key}
+            definition={group}
             items={grouped[group.key] || []}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
             onRefresh={refresh}
             onHistory={openFileHistory}
             onIgnore={ignorePath}
-            warning={group.warning}
           />
         ))}
-        {worktreeStatus?.state === "clean" && <div className="empty-hint">No source-control changes</div>}
-        {sourceControlTotal > 0 && GROUPS.every((group) => !grouped[group.key]?.length) && (
-          <div className="empty-hint">No changes match the filter.</div>
-        )}
+        {worktreeStatus?.state === "clean" && <div className="empty-hint scm-clean-state">No source-control changes. Edit or save a file to create a tracked change.</div>}
+        {sourceControlTotal > 0 && GROUPS.every((group) => !grouped[group.key]?.length) && <div className="empty-hint">No changes match the filter.</div>}
+
         <button className="scm-history-toggle" onClick={toggleHistory}>
-          {historyOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Checkpoints and Runs
+          {historyOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />} <Clock3 size={13} /> Timeline, checkpoints, runs
         </button>
         {historyOpen && (
           <div className="scm-history">
@@ -400,8 +417,8 @@ export default function SourceControlPanel() {
                 <small>{fileHistory.path}</small>
                 {(fileHistory.changes || []).slice().reverse().map((item) => (
                   <div key={item.change_id}>
-                    <span>{item.change_id} - {item.source} - {item.status}</span>
-                    <small>{item.action} {item.run_id ? `- ${item.run_id}` : ""} {item.snapshot_id ? `- ${item.snapshot_id}` : ""}</small>
+                    <span>{item.change_id} · {item.source} · {item.status}</span>
+                    <small>{item.action} {item.run_id ? `· ${item.run_id}` : ""} {item.snapshot_id ? `· ${item.snapshot_id}` : ""}</small>
                     <button className="scm-inline-action" onClick={() => restoreFile(item.path, item.snapshot_id)}>
                       <RotateCcw size={12} /> Restore
                     </button>
@@ -421,7 +438,7 @@ export default function SourceControlPanel() {
             {(history?.runs || []).slice().reverse().map((item) => (
               <div key={item.run_id}>
                 <span>{item.user_prompt}</span>
-                <small>{item.run_id} - {item.status}</small>
+                <small>{item.run_id} · {item.status}</small>
               </div>
             ))}
             {!!timeline?.events?.length && (
@@ -430,7 +447,7 @@ export default function SourceControlPanel() {
                 {timeline.events.slice(0, 30).map((item, index) => (
                   <div key={`${item.type}-${item.id}-${index}`}>
                     <span>{item.label}</span>
-                    <small>{item.type} - {item.id}</small>
+                    <small>{item.type} · {item.id}</small>
                   </div>
                 ))}
               </section>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useIde } from "../context/IdeContext";
+import { api } from "../api";
 import { fuzzyFilter } from "../fuzzy";
 
 export default function CommandPalette() {
@@ -19,6 +20,11 @@ export default function CommandPalette() {
     setBobCollapsed,
     activePath,
     runInTerminal,
+    setSidebarView,
+    loadWorktree,
+    currentProject,
+    worktreeStatus,
+    pushToast,
   } = useIde();
 
   const [query, setQuery] = useState("");
@@ -42,6 +48,11 @@ export default function CommandPalette() {
       { label: "View: Toggle Panel", run: () => setBottomCollapsed((c) => !c) },
       { label: "View: Toggle Sidebar", run: () => setSidebarCollapsed((c) => !c) },
       { label: "View: Toggle Bob Assistant", run: () => setBobCollapsed((c) => !c) },
+      { label: "Source Control: Open", run: () => { setSidebarView("sourceControl"); setSidebarCollapsed(false); } },
+      { label: "Source Control: Refresh", run: () => loadWorktree(currentProject) },
+      { label: "Source Control: Stage All", run: async () => { await api.worktreeStageAll(currentProject); await loadWorktree(currentProject); pushToast("Staged all changes"); }, enabled: !!worktreeStatus?.summary?.changes },
+      { label: "Source Control: Apply Passing Bob Proposals", run: async () => { await api.worktreeApplyPassing(currentProject); await loadWorktree(currentProject); pushToast("Applied passing proposals"); }, enabled: !!worktreeStatus?.summary?.proposed },
+      { label: "Bob: Run Agent on Current File", run: async () => { const prompt = window.prompt("What should Bob change?"); if (!prompt) return; await api.modelRunAgent(currentProject, prompt, activePath); pushToast("Bob run queued"); }, enabled: !!currentProject },
     ],
     [
       saveActiveTab,
@@ -57,6 +68,11 @@ export default function CommandPalette() {
       setBobCollapsed,
       activePath,
       runInTerminal,
+      setSidebarView,
+      loadWorktree,
+      currentProject,
+      worktreeStatus,
+      pushToast,
     ]
   );
 

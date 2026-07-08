@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import urllib.error
 import urllib.request
 from typing import Any
+
+from bob_core.model_config import read_model_config
 
 PLAN_DEFAULTS = {
     "task_type": "",
@@ -75,15 +76,16 @@ def parse_coder_output(output: str, expected_files: list[str] | None = None) -> 
 
 class ColabAdapter:
     def __init__(self):
-        self.base_url = os.getenv("BOB_COLAB_BASE_URL", "").rstrip("/")
-        self.plan_path = os.getenv("BOB_COLAB_PLAN_PATH", "/plan")
-        self.run_path = os.getenv("BOB_COLAB_RUN_PATH", "/run-agent")
-        self.timeout = int(os.getenv("BOB_COLAB_TIMEOUT", "600"))
-        self.token = os.getenv("BOB_COLAB_TOKEN", "")
+        config = read_model_config(include_secret=True)
+        self.base_url = config.get("base_url", "").rstrip("/")
+        self.plan_path = config.get("plan_path", "/plan")
+        self.run_path = config.get("run_path", "/run-agent")
+        self.timeout = int(config.get("timeout", 600))
+        self.token = config.get("token", "")
         try:
-            self.extra_headers = json.loads(os.getenv("BOB_COLAB_HEADERS_JSON", "{}"))
+            self.extra_headers = json.loads(config.get("headers_json", "{}"))
         except json.JSONDecodeError as exc:
-            raise ValueError("BOB_COLAB_HEADERS_JSON must be valid JSON") from exc
+            raise ValueError("Model headers JSON must be valid JSON") from exc
 
     @property
     def configured(self) -> bool:

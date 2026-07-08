@@ -1,0 +1,10 @@
+--- a/templates/index.html
++++ b/templates/index.html
+@@ -1,7 +1,6 @@
+ <!DOCTYPE html>
+ 
+ <html lang="en">
+-
+ <head>
+ 
+     <meta charset="UTF-8">

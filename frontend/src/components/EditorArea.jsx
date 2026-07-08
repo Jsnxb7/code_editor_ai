@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import Editor, { DiffEditor } from "@monaco-editor/react";
-import { Check, Clipboard, Eye, Layers, Minus, X } from "lucide-react";
+import { Check, Clipboard, Eye, FileCode2, Layers, Minus, RotateCcw, ShieldAlert, X } from "lucide-react";
 import { api } from "../api";
 import { useIde, extToLang } from "../context/IdeContext";
 import { useLsp } from "../hooks/useLsp";
@@ -37,7 +37,7 @@ function defineBobTheme(monaco) {
 export default function EditorArea() {
   const {
     tabs, activePath, currentProject, setActivePath, closeTab, updateTabContent,
-    saveActiveTab, saveAllTabs, diffChange, setDiffChange, loadWorktree, pushToast,
+    saveActiveTab, saveAllTabs, diffChange, setDiffChange, loadWorktree, pushToast, openFile,
   } =
     useIde();
   const editorRef = useRef(null);
@@ -123,6 +123,18 @@ export default function EditorArea() {
     }
   };
 
+  const runDiffAction = async (operation, message, closeAfter = false) => {
+    if (!diffChange) return;
+    try {
+      await operation();
+      await loadWorktree(currentProject);
+      pushToast(message);
+      if (closeAfter) setDiffChange(null);
+    } catch (error) {
+      pushToast(error.message, "error");
+    }
+  };
+
   // Wire LSP — only active when Monaco + editor are mounted and a project is selected
   useLsp({
     monaco: monacoRef.current,
@@ -154,7 +166,41 @@ export default function EditorArea() {
               <span className={`review-verdict review-${(diffChange.review_status || "").toLowerCase()}`}>
                 {diffChange.source === "bob_model" ? diffChange.review_status : diffChange.status}
               </span>
-              <button title="Close Diff" onClick={() => setDiffChange(null)}><X size={15} /></button>
+              <div className="diff-header-actions">
+                {diffChange.status === "unstaged" && (
+                  <button title="Stage Change" onClick={() => runDiffAction(
+                    () => api.worktreeStage(currentProject, diffChange.change_id),
+                    `Staged ${diffChange.path}`
+                  )}><Check size={14} /></button>
+                )}
+                {diffChange.status === "staged" && (
+                  <button title="Unstage Change" onClick={() => runDiffAction(
+                    () => api.worktreeUnstage(currentProject, diffChange.change_id),
+                    `Unstaged ${diffChange.path}`
+                  )}><Minus size={14} /></button>
+                )}
+                {diffChange.status === "proposed" && diffChange.review_status !== "FAIL" && (
+                  <button title="Apply Bob Proposal" onClick={() => runDiffAction(
+                    () => api.worktreeApply(currentProject, diffChange.change_id),
+                    `Applied ${diffChange.path}`
+                  )}><Check size={14} /></button>
+                )}
+                {(diffChange.status === "conflict" || (diffChange.status === "proposed" && diffChange.review_status === "FAIL")) && (
+                  <button title="Override and Apply" onClick={() => runDiffAction(
+                    () => api.worktreeOverrideApply(currentProject, diffChange.change_id),
+                    `Override applied ${diffChange.path}`
+                  )}><ShieldAlert size={14} /></button>
+                )}
+                {diffChange.status && diffChange.status !== "baseline" && (
+                  <button title="Discard" onClick={() => runDiffAction(
+                    () => api.worktreeDiscard(currentProject, diffChange.change_id),
+                    `Discarded ${diffChange.path}`,
+                    true
+                  )}><RotateCcw size={14} /></button>
+                )}
+                <button title="Open File" onClick={() => { const path = diffChange.path; setDiffChange(null); openFile(path).catch((error) => pushToast(error.message, "error")); }}><FileCode2 size={14} /></button>
+                <button title="Close Diff" onClick={() => setDiffChange(null)}><X size={15} /></button>
+              </div>
             </div>
             {(diffChange.large_file || diffChange.binary_file) ? (
               <div className="diff-fallback">
@@ -203,6 +249,7 @@ export default function EditorArea() {
                   </div>
                 )}
                 <DiffEditor
+                  height="100%"
                   original={diffChange.before_content}
                   modified={diffChange.after_content}
                   language={extToLang(diffChange.path)}

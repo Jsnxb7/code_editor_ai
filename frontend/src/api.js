@@ -43,8 +43,8 @@ export const api = {
     invoke("code.validate", { path, content }),
   runPytest: (project) => invoke("test.pytest", { project }),
   search: (project, query) => invoke("code.search", { project, query }),
-  bobChat: (message, activePath) =>
-    invoke("assistant.chat", { message, active_path: activePath }),
+  bobChat: (project, message, activePath) =>
+    invoke("assistant.chat", { project, message, active_path: activePath }),
   worktreeStatus: (project) => invoke("worktree.status", { project }),
   worktreeDiff: (project, changeId) =>
     invoke("worktree.get_diff", { project, change_id: changeId }),
@@ -94,6 +94,9 @@ export const api = {
   worktreeIgnorePath: (project, path) => invoke("worktree.ignore_path", { project, path }),
   worktreeGenerateCheckpointMessage: (project) =>
     invoke("worktree.generate_checkpoint_message", { project }),
+  modelGetConfig: () => invoke("model.get_config"),
+  modelSetConfig: (config) => invoke("model.set_config", config),
+  modelHealth: () => invoke("model.health"),
   modelPlan: (project, prompt, activePath) =>
     invoke("model.plan", { project, prompt, active_path: activePath }),
   modelRunAgent: (project, prompt, activePath) =>

@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useIde } from "../context/IdeContext";
+import { api } from "../api";
 import TreeNode from "./TreeNode";
 import ContextMenu from "./ContextMenu";
 import SourceControlPanel from "./SourceControlPanel";
@@ -26,6 +27,11 @@ export default function Sidebar() {
     searchResults,
     getSourceDecoration,
     getFolderChangeCount,
+    setDiffChange,
+    loadWorktree,
+    pushToast,
+    setSidebarView,
+    setSidebarCollapsed,
   } = useIde();
 
   const [menu, setMenu] = useState(null); // { x, y, item }
@@ -136,6 +142,75 @@ export default function Sidebar() {
     }
   };
 
+  const openSourceDiff = async (path) => {
+    try {
+      const data = await api.worktreeStatus(currentProject);
+      const match = [
+        ...(data.conflicts || []),
+        ...(data.proposed || []),
+        ...(data.changes || []),
+        ...(data.staged || []),
+      ].find((change) => change.path === path);
+      if (!match) {
+        pushToast(`No source-control change for ${path}`);
+        return;
+      }
+      setDiffChange(await api.worktreeDiff(currentProject, match.change_id));
+      setSidebarView("sourceControl");
+      setSidebarCollapsed(false);
+    } catch (err) {
+      pushToast(err.message, "error");
+    }
+  };
+
+  const stageFromExplorer = async (path) => {
+    try {
+      const data = await api.worktreeStatus(currentProject);
+      const match = (data.changes || []).find((change) => change.path === path);
+      if (!match) {
+        pushToast(`No unstaged change for ${path}`);
+        return;
+      }
+      await api.worktreeStage(currentProject, match.change_id);
+      await loadWorktree(currentProject);
+      pushToast(`Staged ${path}`);
+    } catch (err) {
+      pushToast(err.message, "error");
+    }
+  };
+
+  const compareWithBaseline = async (path) => {
+    try {
+      const diff = await api.worktreeCompareSnapshot(currentProject, path);
+      setDiffChange({
+        change_id: `compare-${path}`,
+        path,
+        status: "baseline",
+        source: "snapshot",
+        before_content: diff.before_content || "",
+        after_content: diff.after_content || "",
+        diff: diff.diff || "",
+        hunks: [],
+      });
+      setSidebarView("sourceControl");
+      setSidebarCollapsed(false);
+    } catch (err) {
+      pushToast(err.message, "error");
+    }
+  };
+
+  const ignoreExplorerPath = async (path) => {
+    const ok = await confirmDialog(`Add "${path}" to .bobignore?`);
+    if (!ok) return;
+    try {
+      await api.worktreeIgnorePath(currentProject, path);
+      await loadWorktree(currentProject);
+      pushToast(`Ignored ${path}`);
+    } catch (err) {
+      pushToast(err.message, "error");
+    }
+  };
+
   // ---- context menu ----
   const handleContextMenu = (e, item) => {
     e.preventDefault();
@@ -158,18 +233,28 @@ export default function Sidebar() {
           ...(menu.item.path
             ? [
                 { divider: true },
+                { label: "Compare Folder in Source Control", onClick: () => { setSidebarView("sourceControl"); setSidebarCollapsed(false); } },
+                { label: "Add Folder to .bobignore", onClick: () => ignoreExplorerPath(menu.item.path) },
+                { divider: true },
                 { label: "Rename", onClick: () => startInlineRename(menu.item) },
                 { label: "Delete", danger: true, onClick: () => doDelete(menu.item) },
               ]
-            : []),
+            : [
+                { divider: true },
+                { label: "Open Source Control", onClick: () => { setSidebarView("sourceControl"); setSidebarCollapsed(false); } },
+              ]),
         ]
       : [
           { label: "Open", onClick: () => openFile(menu.item.path) },
+          { label: "Open Changes", onClick: () => openSourceDiff(menu.item.path) },
+          { label: "Compare with Baseline", onClick: () => compareWithBaseline(menu.item.path) },
+          { label: "Stage Change", onClick: () => stageFromExplorer(menu.item.path) },
           { divider: true },
           { label: "New File Here", onClick: () => startInlineNew(folderOf(menu.item.path), "file") },
           { label: "New Folder Here", onClick: () => startInlineNew(folderOf(menu.item.path), "folder") },
           { divider: true },
           { label: "Rename", onClick: () => startInlineRename(menu.item) },
+          { label: "Add to .bobignore", onClick: () => ignoreExplorerPath(menu.item.path) },
           { label: "Delete", danger: true, onClick: () => doDelete(menu.item) },
         ]
     : [];

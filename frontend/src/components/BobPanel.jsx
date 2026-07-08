@@ -1,4 +1,20 @@
-import { Bot, CheckCircle2, FileDiff, ListChecks, MessageSquare, Play, Send, XCircle } from "lucide-react";
+import {
+  Bot,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  FileDiff,
+  Link2,
+  ListChecks,
+  MessageSquare,
+  Play,
+  PlugZap,
+  Save,
+  Send,
+  Settings2,
+  Sparkles,
+  XCircle,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { getSocket } from "../socket";
@@ -9,8 +25,19 @@ const MODES = [
   { id: "plan", label: "Plan", icon: ListChecks },
   { id: "agent", label: "Run", icon: Play },
 ];
+
 let msgSeq = 0;
 const nextId = () => ++msgSeq;
+
+const emptyConfig = {
+  base_url: "",
+  plan_path: "/plan",
+  run_path: "/run-agent",
+  timeout: 600,
+  headers_json: "{}",
+  configured: false,
+  token_set: false,
+};
 
 function PlanDetails({ plan }) {
   if (!plan) return null;
@@ -26,7 +53,7 @@ function PlanDetails({ plan }) {
   );
 }
 
-function RunDetails({ message, onOpenProposal }) {
+function RunDetails({ message, onOpenProposal, onOpenSourceControl }) {
   const run = message.run;
   const finalStatus = run?.final_status;
   return (
@@ -46,32 +73,160 @@ function RunDetails({ message, onOpenProposal }) {
         </div>
       )}
       {!!run?.linked_files?.length && (
-        <div className="bob-proposal-list">
-          {run.linked_files.map((path, index) => (
-            <button key={path} onClick={() => onOpenProposal(run.linked_changes[index])}>
-              <FileDiff size={13} /> {path}
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="bob-proposal-list">
+            {run.linked_files.map((path, index) => (
+              <button key={`${path}-${index}`} onClick={() => onOpenProposal(run.linked_changes?.[index])}>
+                <FileDiff size={13} /> {path}
+              </button>
+            ))}
+          </div>
+          <button className="bob-open-scm" onClick={onOpenSourceControl}>
+            <Sparkles size={13} /> Open proposed changes in Source Control
+          </button>
+        </>
       )}
       {run?.error && <div className="bob-run-error">{run.error}</div>}
     </div>
   );
 }
 
+function ConnectionSettings({ config, setConfig, onSave, onHealth, saving, health, tokenInput, setTokenInput, clearToken, setClearToken }) {
+  const [open, setOpen] = useState(true);
+  const statusLabel = health
+    ? health.ok ? "Connected" : "Health failed"
+    : config.configured ? "Configured" : "Not configured";
+
+  return (
+    <section className="bob-connection-card">
+      <button className="bob-connection-title" onClick={() => setOpen((value) => !value)}>
+        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <Settings2 size={14} /> Model connection
+        <span className={health?.ok ? "connection-ok" : config.configured ? "connection-warn" : "connection-off"}>{statusLabel}</span>
+      </button>
+      {open && (
+        <div className="bob-connection-body">
+          <label>
+            Colab / ngrok base URL
+            <input
+              value={config.base_url || ""}
+              placeholder="https://your-ngrok-url"
+              onChange={(event) => setConfig((value) => ({ ...value, base_url: event.target.value }))}
+            />
+          </label>
+          <div className="bob-connection-grid">
+            <label>
+              Plan path
+              <input
+                value={config.plan_path || "/plan"}
+                onChange={(event) => setConfig((value) => ({ ...value, plan_path: event.target.value }))}
+              />
+            </label>
+            <label>
+              Run path
+              <input
+                value={config.run_path || "/run-agent"}
+                onChange={(event) => setConfig((value) => ({ ...value, run_path: event.target.value }))}
+              />
+            </label>
+          </div>
+          <div className="bob-connection-grid">
+            <label>
+              Timeout seconds
+              <input
+                type="number"
+                min="5"
+                max="3600"
+                value={config.timeout || 600}
+                onChange={(event) => setConfig((value) => ({ ...value, timeout: event.target.value }))}
+              />
+            </label>
+            <label>
+              Optional bearer token
+              <input
+                type="password"
+                value={tokenInput}
+                placeholder={config.token_set ? "Token saved — enter to replace" : "optional-secret"}
+                onChange={(event) => setTokenInput(event.target.value)}
+              />
+            </label>
+          </div>
+          <label>
+            Extra headers JSON
+            <input
+              value={config.headers_json || "{}"}
+              spellCheck="false"
+              onChange={(event) => setConfig((value) => ({ ...value, headers_json: event.target.value }))}
+            />
+          </label>
+          <label className="bob-checkbox-row">
+            <input type="checkbox" checked={clearToken} onChange={(event) => setClearToken(event.target.checked)} />
+            Clear saved bearer token on save
+          </label>
+          <div className="bob-connection-actions">
+            <button onClick={onSave} disabled={saving}>
+              <Save size={13} /> Save
+            </button>
+            <button onClick={onHealth} disabled={!config.base_url || saving}>
+              <PlugZap size={13} /> Test /health
+            </button>
+            <button onClick={() => navigator.clipboard?.writeText(config.base_url || "")} disabled={!config.base_url}>
+              <Link2 size={13} /> Copy URL
+            </button>
+          </div>
+          {health && (
+            <div className={`bob-health-box ${health.ok ? "ok" : "fail"}`}>
+              {health.ok ? "Health check passed." : health.message || "Health check failed."}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function BobPanel() {
   const {
-    activePath, currentProject, pushToast, setSidebarView, setSidebarCollapsed, setDiffChange,
+    activePath,
+    currentProject,
+    pushToast,
+    setSidebarView,
+    setSidebarCollapsed,
+    setDiffChange,
+    loadWorktree,
   } = useIde();
   const [messages, setMessages] = useState([{
     id: nextId(),
     role: "assistant",
-    text: "Choose Chat, Plan, or Run. Model changes are always proposed for review before they touch your files.",
+    text: "Choose Chat, Plan, or Run. Bob routes through MCP, and generated edits appear as Source Control proposals before they touch your files.",
   }]);
   const [draft, setDraft] = useState("");
   const [mode, setMode] = useState("chat");
   const [sending, setSending] = useState(false);
+  const [config, setConfig] = useState(emptyConfig);
+  const [tokenInput, setTokenInput] = useState("");
+  const [clearToken, setClearToken] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [health, setHealth] = useState(null);
   const listRef = useRef(null);
+
+  const openSourceControl = () => {
+    setSidebarView("sourceControl");
+    setSidebarCollapsed(false);
+  };
+
+  const loadConfig = async () => {
+    try {
+      setConfig({ ...emptyConfig, ...(await api.modelGetConfig()) });
+    } catch (error) {
+      pushToast(error.message, "error");
+    }
+  };
+
+  useEffect(() => {
+    loadConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const socket = getSocket();
@@ -82,23 +237,65 @@ export default function BobPanel() {
         if (!found) return [...current, { id: nextId(), role: "assistant", kind: "run", ...event }];
         return current.map((item) => item.run_id === event.run_id ? { ...item, ...event, kind: "run" } : item);
       });
+      if (event.status === "completed") loadWorktree(currentProject).catch(() => {});
     };
     socket.on("model:run", onRun);
     return () => socket.off("model:run", onRun);
-  }, [currentProject]);
+  }, [currentProject, loadWorktree]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, sending]);
 
   const openProposal = async (changeId) => {
-    if (!changeId) return;
+    if (!changeId) {
+      openSourceControl();
+      return;
+    }
     try {
       setDiffChange(await api.worktreeDiff(currentProject, changeId));
-      setSidebarView("sourceControl");
-      setSidebarCollapsed(false);
+      openSourceControl();
     } catch (error) {
       pushToast(error.message, "error");
+    }
+  };
+
+  const saveConfig = async () => {
+    setSavingConfig(true);
+    setHealth(null);
+    try {
+      const payload = {
+        base_url: config.base_url || "",
+        plan_path: config.plan_path || "/plan",
+        run_path: config.run_path || "/run-agent",
+        timeout: config.timeout || 600,
+        headers_json: config.headers_json || "{}",
+      };
+      if (tokenInput) payload.token = tokenInput;
+      if (clearToken) payload.token = "";
+      const saved = await api.modelSetConfig(payload);
+      setConfig({ ...emptyConfig, ...saved });
+      setTokenInput("");
+      setClearToken(false);
+      pushToast("Saved Bob model connection");
+    } catch (error) {
+      pushToast(error.message, "error");
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  const testHealth = async () => {
+    setSavingConfig(true);
+    try {
+      const result = await api.modelHealth();
+      setHealth(result);
+      pushToast(result.ok ? "Colab health check passed" : "Colab health check failed", result.ok ? "success" : "error");
+    } catch (error) {
+      setHealth({ ok: false, message: error.message });
+      pushToast(error.message, "error");
+    } finally {
+      setSavingConfig(false);
     }
   };
 
@@ -110,15 +307,18 @@ export default function BobPanel() {
     setSending(true);
     try {
       if (mode === "chat") {
-        const data = await api.bobChat(content, activePath);
-        setMessages((current) => [...current, { id: nextId(), role: "assistant", text: data.reply }]);
+        const data = await api.bobChat(currentProject, content, activePath);
+        setMessages((current) => [...current, {
+          id: nextId(), role: "assistant", text: data.reply, plan: data.plan,
+        }]);
       } else {
         const run = mode === "plan"
           ? await api.modelPlan(currentProject, content, activePath)
           : await api.modelRunAgent(currentProject, content, activePath);
         setMessages((current) => [...current, {
-          id: nextId(), role: "assistant", kind: "run", run_id: run.run_id, status: "queued",
+          id: nextId(), role: "assistant", kind: "run", run_id: run.run_id, status: "queued", run,
         }]);
+        openSourceControl();
       }
     } catch (error) {
       setMessages((current) => [...current, { id: nextId(), role: "assistant", text: `Bob request failed: ${error.message}` }]);
@@ -131,6 +331,21 @@ export default function BobPanel() {
   return (
     <aside className="bob-panel">
       <div className="sidebar-header">BOB ASSISTANT</div>
+      <div className="bob-toolchain-note">MCP command plane · JSON worktree proposals · Monaco diff review · Colab model endpoint</div>
+
+      <ConnectionSettings
+        config={config}
+        setConfig={setConfig}
+        onSave={saveConfig}
+        onHealth={testHealth}
+        saving={savingConfig}
+        health={health}
+        tokenInput={tokenInput}
+        setTokenInput={setTokenInput}
+        clearToken={clearToken}
+        setClearToken={setClearToken}
+      />
+
       <div className="bob-mode-control">
         {MODES.map(({ id, label, icon: Icon }) => (
           <button key={id} className={mode === id ? "active" : ""} onClick={() => setMode(id)} title={`${label} mode`}>
@@ -143,8 +358,11 @@ export default function BobPanel() {
           <div key={message.id} className={`bob-msg bob-msg-${message.role}`}>
             <div className="bob-msg-role">{message.role === "user" ? `You · ${message.mode || "chat"}` : "Bob"}</div>
             {message.kind === "run"
-              ? <RunDetails message={message} onOpenProposal={openProposal} />
-              : <div className="bob-msg-text">{message.text}</div>}
+              ? <RunDetails message={message} onOpenProposal={openProposal} onOpenSourceControl={openSourceControl} />
+              : <>
+                  <div className="bob-msg-text">{message.text}</div>
+                  <PlanDetails plan={message.plan} />
+                </>}
           </div>
         ))}
         {sending && <div className="bob-msg bob-msg-assistant bob-msg-pending"><span className="bob-typing-dot" /><span className="bob-typing-dot" /><span className="bob-typing-dot" /></div>}
@@ -152,7 +370,7 @@ export default function BobPanel() {
       <div className="bob-input-row">
         <textarea
           className="bob-input"
-          placeholder={mode === "chat" ? "Ask Bob..." : mode === "plan" ? "Describe what to plan..." : "Describe changes for Bob to propose..."}
+          placeholder={mode === "chat" ? "Ask Bob about this workspace..." : mode === "plan" ? "Describe what Bob should plan..." : "Describe changes for Bob to propose..."}
           value={draft}
           rows={3}
           onChange={(event) => setDraft(event.target.value)}
@@ -164,7 +382,7 @@ export default function BobPanel() {
           }}
         />
         <button className="bob-send-btn" onClick={send} disabled={sending || !draft.trim()} title="Send">
-          <Send size={16} />
+          {mode === "agent" ? <Sparkles size={16} /> : <Send size={16} />}
         </button>
       </div>
     </aside>
