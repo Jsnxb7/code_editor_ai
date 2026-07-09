@@ -10,10 +10,12 @@ from bob_core.file_manager import list_files, read_file, scan_tree
 from bob_core.json_worktree import (
     create_run,
     get_run,
-    record_model_proposal,
     record_model_stage,
     update_run,
 )
+from bob_core.proposal_store import create_proposal
+from bob_core.model_config import read_model_config
+from bob_core import git_service
 
 _publisher: Callable[[str, dict[str, Any]], None] | None = None
 
@@ -35,18 +37,33 @@ def _emit_worktree_changed(project: str) -> None:
 
 
 def _context(project: str, active_path: str | None) -> dict:
+    config = read_model_config()
     paths = list_files(project)
     files = {}
     preferred = [active_path] if active_path and active_path in paths else []
-    for path in preferred + [path for path in paths if path not in preferred]:
+    ordered = preferred if config.get("context_mode") == "active" else preferred + [path for path in paths if path not in preferred]
+    budget = int(config.get("context_budget", 160000))
+    for path in ordered:
         try:
             content = read_file(project, path)["content"]
         except Exception:
             continue
-        if sum(len(value) for value in files.values()) + len(content) > 500_000:
+        if sum(len(value) for value in files.values()) + len(content) > budget:
             break
         files[path] = content
-    return {"workspace_tree": scan_tree(project), "files": files}
+    git_context = {}
+    if git_service.is_git_repo(project)["is_repo"]:
+        status = git_service.get_status(project)
+        git_context = {"branch": status.get("branch"), "head": status.get("head")}
+    return {
+        "workspace_tree": scan_tree(project),
+        "files": files,
+        "context_mode": config.get("context_mode", "workspace"),
+        "context_budget": budget,
+        "max_iterations": int(config.get("max_iterations", 5)),
+        "keep_model_loaded": bool(config.get("keep_model_loaded", True)),
+        "git": git_context,
+    }
 
 
 def start_model_run(
@@ -87,7 +104,14 @@ def _execute(project: str, run_id: str, prompt: str, mode: str, active_path: str
             _emit(project, run_id, "completed", run=record)
             return
 
-        result = adapter.run_agent(payload)
+        def on_stream_event(event: dict) -> None:
+            status = event.get("status")
+            if status in {"queued", "running", "planning", "context", "coding", "reviewing"}:
+                update_run(project, run_id, status=status)
+                record_model_stage(project, run_id, status, event)
+                _emit(project, run_id, status, event=event)
+
+        result = adapter.run_agent_stream(payload, on_stream_event)
         plan = result["plan"]
         record_model_stage(project, run_id, "planner", plan)
         _emit(project, run_id, "coding", plan=plan)
@@ -99,13 +123,16 @@ def _execute(project: str, run_id: str, prompt: str, mode: str, active_path: str
             "review": result.get("review", ""),
             "final_status": result["final_status"],
         })
-        proposals = record_model_proposal(
+        proposal = create_proposal(
             project,
             run_id,
             result["files"],
             result["final_status"],
+            summary=plan.get("summary", ""),
+            review=result.get("review", ""),
         )
-        if proposals:
+        proposal_files = proposal.get("files", [])
+        if proposal_files:
             _emit_worktree_changed(project)
         record = update_run(
             project,
@@ -115,10 +142,11 @@ def _execute(project: str, run_id: str, prompt: str, mode: str, active_path: str
             review=result.get("review", ""),
             final_status=result["final_status"],
             provider=result.get("provider", "colab"),
-            linked_changes=[item["change_id"] for item in proposals],
-            linked_files=[item["path"] for item in proposals],
+            linked_proposals=[proposal["proposal_id"]],
+            linked_changes=[f"proposal:{proposal['proposal_id']}:{item['path']}" for item in proposal_files],
+            linked_files=[item["path"] for item in proposal_files],
         )
-        _emit(project, run_id, "completed", run=record, proposals=proposals)
+        _emit(project, run_id, "completed", run=record, proposals=[proposal])
     except Exception as exc:
         record = update_run(project, run_id, status="failed", final_status="FAIL", error=str(exc))
         _emit(project, run_id, "failed", run=record, error=str(exc))

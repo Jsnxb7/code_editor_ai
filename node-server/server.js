@@ -23,6 +23,12 @@ const MUTATING_TOOLS = new Set([
   "worktree.ignore_path", "worktree.create_snapshot",
   "model.run_agent", "model.plan", "model.set_config",
   "workspace.create", "workspace.import",
+  "git.init", "git.stage", "git.unstage", "git.stage_all", "git.unstage_all",
+  "git.stage_hunk", "git.discard_hunk", "git.discard", "git.discard_all",
+  "git.commit", "git.set_identity", "git.create_branch", "git.checkout",
+  "git.restore_file", "git.accept_current", "git.accept_incoming",
+  "proposal.apply", "proposal.override_apply", "proposal.apply_all",
+  "proposal.discard", "proposal.discard_all",
 ]);
 
 export function createServer() {
@@ -85,6 +91,9 @@ export function createServer() {
       const project = arguments_.project;
       if (project && MUTATING_TOOLS.has(name)) {
         const room = `workspace:${project}`;
+        if (name.startsWith("git.")) io.to(room).emit("git:changed", { project });
+        if (name.startsWith("proposal.")) io.to(room).emit("proposal:changed", { project });
+        io.to(room).emit("source-control:changed", { project });
         io.to(room).emit("worktree:changed", { project });
         io.to(room).emit("workspace:changed", { project, paths: [] });
       }

@@ -185,7 +185,19 @@ export default function EditorArea() {
                     `Applied ${diffChange.path}`
                   )}><Check size={14} /></button>
                 )}
-                {(diffChange.status === "conflict" || (diffChange.status === "proposed" && diffChange.review_status === "FAIL")) && (
+                {diffChange.status === "conflict" && diffChange.source === "git" && (
+                  <>
+                    <button title="Accept Current" onClick={() => runDiffAction(
+                      () => api.gitAcceptCurrent(currentProject, diffChange.path),
+                      `Accepted current ${diffChange.path}`
+                    )}>Current</button>
+                    <button title="Accept Incoming" onClick={() => runDiffAction(
+                      () => api.gitAcceptIncoming(currentProject, diffChange.path),
+                      `Accepted incoming ${diffChange.path}`
+                    )}>Incoming</button>
+                  </>
+                )}
+                {(diffChange.source === "bob_model" && (diffChange.status === "conflict" || diffChange.review_status === "FAIL")) && (
                   <button title="Override and Apply" onClick={() => runDiffAction(
                     () => api.worktreeOverrideApply(currentProject, diffChange.change_id),
                     `Override applied ${diffChange.path}`

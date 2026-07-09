@@ -51,7 +51,7 @@ export const api = {
   stopPython: (project, path) => invoke("code.stop_python", { project, path }),
   search: (project, query) => invoke("code.search", { project, query }),
   bobChat: (project, message, activePath) =>
-    invoke("assistant.chat", { project, message, active_path: activePath }),
+    invoke("model.chat", { project, message, active_path: activePath }),
   worktreeStatus: (project) => invoke("worktree.status", { project }),
   worktreeScan: (project) => invoke("worktree.scan", { project }),
   worktreeIndexedChanges: (project) => invoke("worktree.indexed_changes", { project }),
@@ -103,9 +103,51 @@ export const api = {
   worktreeIgnorePath: (project, path) => invoke("worktree.ignore_path", { project, path }),
   worktreeGenerateCheckpointMessage: (project) =>
     invoke("worktree.generate_checkpoint_message", { project }),
+  gitIsRepo: (project) => invoke("git.is_repo", { project }),
+  gitInit: (project) => invoke("git.init", { project }),
+  gitStatus: (project) => invoke("git.status", { project }),
+  gitDiff: (project, path, staged = false, conflict = false) =>
+    invoke("git.diff", { project, path, staged, conflict }),
+  gitStage: (project, path) => invoke("git.stage", { project, path }),
+  gitUnstage: (project, path) => invoke("git.unstage", { project, path }),
+  gitStageAll: (project) => invoke("git.stage_all", { project }),
+  gitUnstageAll: (project) => invoke("git.unstage_all", { project }),
+  gitDiscard: (project, path, staged = false, untracked = false) =>
+    invoke("git.discard", { project, path, staged, untracked }),
+  gitDiscardAll: (project, includeUntracked = false) =>
+    invoke("git.discard_all", { project, include_untracked: includeUntracked }),
+  gitCommit: (project, message) => invoke("git.commit", { project, message }),
+  gitIdentity: (project) => invoke("git.identity", { project }),
+  gitSetIdentity: (project, name, email) =>
+    invoke("git.set_identity", { project, name, email }),
+  gitBranches: (project) => invoke("git.branches", { project }),
+  gitCreateBranch: (project, name, checkout = true) =>
+    invoke("git.create_branch", { project, name, checkout }),
+  gitCheckout: (project, name) => invoke("git.checkout", { project, name }),
+  gitLog: (project, limit = 50) => invoke("git.log", { project, limit }),
+  gitFileHistory: (project, path, limit = 50) =>
+    invoke("git.file_history", { project, path, limit }),
+  gitAcceptCurrent: (project, path) => invoke("git.accept_current", { project, path }),
+  gitAcceptIncoming: (project, path) => invoke("git.accept_incoming", { project, path }),
+  gitGenerateCommitMessage: (project) =>
+    invoke("git.generate_commit_message", { project }),
+  proposalList: (project, includeInactive = false) =>
+    invoke("proposal.list", { project, include_inactive: includeInactive }),
+  proposalDiff: (project, proposalId, path) =>
+    invoke("proposal.diff", { project, proposal_id: proposalId, path }),
+  proposalApply: (project, proposalId, path) =>
+    invoke("proposal.apply", { project, proposal_id: proposalId, path }),
+  proposalOverrideApply: (project, proposalId, path) =>
+    invoke("proposal.override_apply", { project, proposal_id: proposalId, path }),
+  proposalApplyAll: (project, onlyPassing = true) =>
+    invoke("proposal.apply_all", { project, only_passing: onlyPassing }),
+  proposalDiscard: (project, proposalId, path) =>
+    invoke("proposal.discard", { project, proposal_id: proposalId, path }),
+  proposalDiscardAll: (project) => invoke("proposal.discard_all", { project }),
   modelGetConfig: () => invoke("model.get_config"),
   modelSetConfig: (config) => invoke("model.set_config", config),
   modelHealth: () => invoke("model.health"),
+  modelCapabilities: () => invoke("model.capabilities"),
   modelPlan: (project, prompt, activePath) =>
     invoke("model.plan", { project, prompt, active_path: activePath }),
   modelRunAgent: (project, prompt, activePath) =>

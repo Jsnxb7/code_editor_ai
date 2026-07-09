@@ -251,3 +251,49 @@ polling.
   another tunnel.
 - Local Git ships first; remotes and push/pull remain a later phase.
 - Legacy `worktree.*` aliases remain for one release before removal.
+
+## Implementation Status
+
+Implemented on July 9, 2026:
+
+- Per-workspace Git repositories with status, diffs, staging, hunk staging,
+  discard, commits, branches, history, file restore, and conflict choices.
+- A separate Bob proposal store with hash-checked apply, override, discard,
+  batch actions, review state, risk, run linkage, and before/after diffs.
+- Idempotent legacy JSON migration with backups, snapshot-to-commit conversion,
+  staged-content recovery, and active proposal migration.
+- Node realtime watching for workspace files, Git state, proposals, runs, and
+  model stages.
+- A Git-native React Source Control panel and Monaco diff workflow.
+- Bob Chat fields and MCP tools for Colab capability discovery, chat, planning,
+  streaming agent runs, context controls, and persisted run stages.
+- A Colab notebook compatibility cell implementing the `bob-colab-v2`
+  endpoint contract.
+
+```text
+React UI
+  -> Node /api/mcp/call and Socket.IO
+  -> Python FastMCP
+       -> Git service / proposal store
+       -> model service / Colab adapter
+  -> Colab bob-colab-v2 HTTP service
+```
+
+Compatibility notes:
+
+- `worktree.*` methods remain temporary aliases, while the visible UI and
+  source-control behavior are Git-native.
+- Repository-wide commit restore is deliberately unavailable; restore remains
+  file-scoped to avoid silently overwriting unrelated work.
+- Bob proposal application is currently file-scoped. Proposal hunk apply is a
+  follow-up; Git working-tree hunk stage and discard are implemented.
+- Notebook streaming wraps the existing orchestration with stage events.
+  Cancellation inside model generation needs callbacks in the Colab loop.
+
+Verification:
+
+- Node tests pass.
+- Frontend lint passes with two pre-existing Fast Refresh warnings.
+- React production build passes.
+- Python and MCP contract tests require repairing the local `.venv`; its base
+  interpreter currently points to a removed Python 3.11 installation.

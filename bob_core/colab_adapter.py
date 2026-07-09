@@ -78,9 +78,18 @@ class ColabAdapter:
     def __init__(self):
         config = read_model_config(include_secret=True)
         self.base_url = config.get("base_url", "").rstrip("/")
+        self.health_path = config.get("health_path", "/health")
+        self.capabilities_path = config.get("capabilities_path", "/capabilities")
+        self.chat_path = config.get("chat_path", "/chat")
         self.plan_path = config.get("plan_path", "/plan")
         self.run_path = config.get("run_path", "/run-agent")
+        self.stream_path = config.get("stream_path", "/run-agent/stream")
         self.timeout = int(config.get("timeout", 600))
+        self.max_iterations = int(config.get("max_iterations", 5))
+        self.context_mode = config.get("context_mode", "workspace")
+        self.context_budget = int(config.get("context_budget", 160000))
+        self.keep_model_loaded = bool(config.get("keep_model_loaded", True))
+        self.prefer_streaming = bool(config.get("prefer_streaming", True))
         self.token = config.get("token", "")
         try:
             self.extra_headers = json.loads(config.get("headers_json", "{}"))
@@ -115,6 +124,31 @@ class ColabAdapter:
             raise ValueError("Colab response must be a JSON object")
         return body
 
+    def _get(self, path: str) -> dict:
+        if not self.configured:
+            raise RuntimeError("Colab model endpoint is not configured")
+        headers = {**self.extra_headers}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        request = urllib.request.Request(f"{self.base_url}{path}", headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=min(self.timeout, 20)) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+            raise RuntimeError(f"Could not reach Colab: {exc}") from exc
+        if not isinstance(body, dict):
+            raise ValueError("Colab response must be a JSON object")
+        return body
+
+    def health(self) -> dict:
+        return self._get(self.health_path)
+
+    def capabilities(self) -> dict:
+        return self._get(self.capabilities_path)
+
+    def chat(self, payload: dict) -> dict:
+        return self._post(self.chat_path, payload)
+
     def plan(self, payload: dict) -> dict:
         if not self.configured:
             return normalize_plan({
@@ -143,7 +177,13 @@ class ColabAdapter:
                 "final_status": "FAIL",
                 "files": {},
             }
-        body = self._post(self.run_path, payload)
+        body = self._post(self.run_path, {
+            **payload,
+            "max_iterations": payload.get("max_iterations", self.max_iterations),
+            "context_mode": payload.get("context_mode", self.context_mode),
+            "context_budget": payload.get("context_budget", self.context_budget),
+            "keep_model_loaded": payload.get("keep_model_loaded", self.keep_model_loaded),
+        })
         plan = normalize_plan(body.get("plan"))
         code = str(body.get("code") or "")
         files = body.get("files")
@@ -155,3 +195,49 @@ class ColabAdapter:
             final_status = "PASS" if review.lstrip().upper().startswith("PASS") else "FAIL"
         return {**body, "plan": plan, "code": code, "files": files, "review": review, "final_status": final_status}
 
+    def run_agent_stream(self, payload: dict, on_event) -> dict:
+        if not self.prefer_streaming:
+            return self.run_agent(payload)
+        headers = {"Content-Type": "application/json", "Accept": "text/event-stream", **self.extra_headers}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        request = urllib.request.Request(
+            f"{self.base_url}{self.stream_path}",
+            data=json.dumps({
+                **payload,
+                "max_iterations": payload.get("max_iterations", self.max_iterations),
+                "context_mode": payload.get("context_mode", self.context_mode),
+                "context_budget": payload.get("context_budget", self.context_budget),
+                "keep_model_loaded": payload.get("keep_model_loaded", self.keep_model_loaded),
+            }).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        final = None
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    event = json.loads(line[5:].strip())
+                    on_event(event)
+                    if event.get("result"):
+                        final = event["result"]
+        except urllib.error.HTTPError as exc:
+            if exc.code in {404, 405, 415}:
+                return self.run_agent(payload)
+            detail = exc.read().decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"Colab stream returned HTTP {exc.code}: {detail}") from exc
+        if not isinstance(final, dict):
+            raise RuntimeError("Colab stream ended without a final result")
+        plan = normalize_plan(final.get("plan"))
+        code = str(final.get("code") or "")
+        files = final.get("files")
+        if not isinstance(files, dict):
+            files = parse_coder_output(code, plan.get("files_needed"))
+        review = str(final.get("review") or "")
+        final_status = str(final.get("final_status") or "").upper()
+        if final_status not in {"PASS", "FAIL"}:
+            final_status = "PASS" if review.lstrip().upper().startswith("PASS") else "FAIL"
+        return {**final, "plan": plan, "code": code, "files": files, "review": review, "final_status": final_status}

@@ -19,9 +19,20 @@ CONFIG_PATH = DATA_DIR / "model_config.json"
 
 DEFAULT_MODEL_CONFIG: dict[str, Any] = {
     "base_url": "",
+    "health_path": "/health",
+    "capabilities_path": "/capabilities",
+    "chat_path": "/chat",
     "plan_path": "/plan",
     "run_path": "/run-agent",
+    "stream_path": "/run-agent/stream",
+    "run_status_path": "/runs/{run_id}",
+    "cancel_path": "/runs/{run_id}/cancel",
     "timeout": 600,
+    "max_iterations": 5,
+    "context_mode": "workspace",
+    "context_budget": 160000,
+    "prefer_streaming": True,
+    "keep_model_loaded": True,
     "token": "",
     "headers_json": "{}",
     "updated_at": None,
@@ -39,6 +50,14 @@ def _clean_timeout(value: Any) -> int:
     except (TypeError, ValueError):
         timeout = 600
     return max(5, min(timeout, 3600))
+
+
+def _clean_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
 
 
 def _validate_headers_json(value: str | dict | None) -> str:
@@ -86,9 +105,23 @@ def read_model_config(include_secret: bool = False) -> dict[str, Any]:
     for key, value in env.items():
         merged[key] = value
     merged["base_url"] = str(merged.get("base_url") or "").rstrip("/")
-    merged["plan_path"] = _clean_path(merged.get("plan_path"), "/plan")
-    merged["run_path"] = _clean_path(merged.get("run_path"), "/run-agent")
+    for key, fallback in (
+        ("health_path", "/health"),
+        ("capabilities_path", "/capabilities"),
+        ("chat_path", "/chat"),
+        ("plan_path", "/plan"),
+        ("run_path", "/run-agent"),
+        ("stream_path", "/run-agent/stream"),
+        ("run_status_path", "/runs/{run_id}"),
+        ("cancel_path", "/runs/{run_id}/cancel"),
+    ):
+        merged[key] = _clean_path(merged.get(key), fallback)
     merged["timeout"] = _clean_timeout(merged.get("timeout"))
+    merged["max_iterations"] = _clean_int(merged.get("max_iterations"), 5, 1, 20)
+    merged["context_budget"] = _clean_int(merged.get("context_budget"), 160000, 10000, 1000000)
+    merged["context_mode"] = merged.get("context_mode") if merged.get("context_mode") in {"active", "open", "workspace"} else "workspace"
+    merged["prefer_streaming"] = bool(merged.get("prefer_streaming", True))
+    merged["keep_model_loaded"] = bool(merged.get("keep_model_loaded", True))
     merged["headers_json"] = _validate_headers_json(merged.get("headers_json"))
     merged["configured"] = bool(merged["base_url"])
     merged["token_set"] = bool(merged.get("token"))
@@ -99,9 +132,20 @@ def read_model_config(include_secret: bool = False) -> dict[str, Any]:
 
 def save_model_config(
     base_url: str | None = None,
+    health_path: str | None = None,
+    capabilities_path: str | None = None,
+    chat_path: str | None = None,
     plan_path: str | None = None,
     run_path: str | None = None,
+    stream_path: str | None = None,
+    run_status_path: str | None = None,
+    cancel_path: str | None = None,
     timeout: int | str | None = None,
+    max_iterations: int | str | None = None,
+    context_mode: str | None = None,
+    context_budget: int | str | None = None,
+    prefer_streaming: bool | None = None,
+    keep_model_loaded: bool | None = None,
     token: str | None = None,
     headers_json: str | dict | None = None,
 ) -> dict[str, Any]:
@@ -111,12 +155,32 @@ def save_model_config(
     current = load_json(CONFIG_PATH, DEFAULT_MODEL_CONFIG.copy())
     if base_url is not None:
         current["base_url"] = str(base_url).strip().rstrip("/")
-    if plan_path is not None:
-        current["plan_path"] = _clean_path(plan_path, "/plan")
-    if run_path is not None:
-        current["run_path"] = _clean_path(run_path, "/run-agent")
+    for key, value, fallback in (
+        ("health_path", health_path, "/health"),
+        ("capabilities_path", capabilities_path, "/capabilities"),
+        ("chat_path", chat_path, "/chat"),
+        ("plan_path", plan_path, "/plan"),
+        ("run_path", run_path, "/run-agent"),
+        ("stream_path", stream_path, "/run-agent/stream"),
+        ("run_status_path", run_status_path, "/runs/{run_id}"),
+        ("cancel_path", cancel_path, "/runs/{run_id}/cancel"),
+    ):
+        if value is not None:
+            current[key] = _clean_path(value, fallback)
     if timeout is not None:
         current["timeout"] = _clean_timeout(timeout)
+    if max_iterations is not None:
+        current["max_iterations"] = _clean_int(max_iterations, 5, 1, 20)
+    if context_budget is not None:
+        current["context_budget"] = _clean_int(context_budget, 160000, 10000, 1000000)
+    if context_mode is not None:
+        if context_mode not in {"active", "open", "workspace"}:
+            raise ValueError("Context mode must be active, open, or workspace")
+        current["context_mode"] = context_mode
+    if prefer_streaming is not None:
+        current["prefer_streaming"] = bool(prefer_streaming)
+    if keep_model_loaded is not None:
+        current["keep_model_loaded"] = bool(keep_model_loaded)
     if token is not None:
         current["token"] = str(token)
     if headers_json is not None:

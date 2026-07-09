@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import hashlib
+import json
 from typing import Any, Callable
 
 from config import WORKSPACE_DIR
@@ -58,6 +60,9 @@ from bob_core.json_worktree import (
 from bob_core.model_service import model_run_status, start_model_run
 from bob_core.colab_adapter import ColabAdapter
 from bob_core.model_config import read_model_config, save_model_config
+from bob_core import git_service
+from bob_core import proposal_store
+from bob_core.git_migration import migrate_json_worktree
 from workspace_tools import search_workspace
 
 Capability = Callable[..., Any]
@@ -108,9 +113,9 @@ def system_status() -> dict:
     return {
         "service": "Bob IDE",
         "mcp": True,
-        "realtime": ["terminal", "workspace", "editor", "lsp", "worktree", "model"],
+        "realtime": ["terminal", "workspace", "editor", "lsp", "git", "proposal", "model"],
         "command_plane": "MCP capability registry",
-        "source_control": "JSON worktree",
+        "source_control": "Git with Bob proposal store",
     }
 
 
@@ -133,7 +138,7 @@ def workspace_create(name: str) -> dict:
     (target / "test.py").write_text(
         "def test_workspace_ready():\n    assert True\n", encoding="utf-8"
     )
-    init_worktree(name)
+    git_service.init_repo(name)
     _publish("workspace:changed", {"project": name, "paths": ["main.py", "test.py"]})
     return {"project": name}
 
@@ -156,7 +161,7 @@ def workspace_import(
             create_folder(name, folder)
         for item in files:
             save_file(name, item.get("path", ""), item.get("content", ""))
-        init_worktree(name)
+        git_service.init_repo(name)
     except Exception:
         if target.exists():
             shutil.rmtree(target)
@@ -189,63 +194,38 @@ def file_read(project: str, path: str) -> dict:
 @capability("file.write")
 def file_write(project: str, path: str, content: str = "") -> dict:
     """Create or replace an editable text file."""
-    init_worktree(project)
     result = save_file(project, path, content)
-    change = record_manual_change(project, path)
     _publish("workspace:changed", {"project": project, "paths": [path]})
-    _publish("worktree:changed", {"project": project})
-    return {**result, "change": change}
+    _source_control_event(project)
+    return result
 
 
 @capability("file.create")
 def file_create(project: str, path: str) -> dict:
     """Create an empty editable text file."""
-    init_worktree(project)
     result = create_file(project, path)
-    change = record_manual_change(project, path)
     _publish("workspace:changed", {"project": project, "paths": [path]})
-    _publish("worktree:changed", {"project": project})
-    return {**result, "change": change}
+    _source_control_event(project)
+    return result
 
 
 @capability("file.delete")
 def file_delete(project: str, path: str) -> dict:
     """Delete a file or folder."""
-    init_worktree(project)
     source = safe_path(project, path)
-    file_paths = (
-        [item.relative_to(safe_path(project)).as_posix() for item in source.rglob("*") if item.is_file()]
-        if source.is_dir()
-        else [path]
-    )
     result = delete_path(project, path)
-    changes = [change for item in file_paths if (change := record_manual_change(project, item))]
     _publish("workspace:changed", {"project": project, "paths": [path]})
-    _publish("worktree:changed", {"project": project})
-    return {**result, "changes": changes}
+    _source_control_event(project)
+    return result
 
 
 @capability("file.rename")
 def file_rename(project: str, path: str, new_path: str) -> dict:
     """Rename or move a file or folder."""
-    init_worktree(project)
-    source = safe_path(project, path)
-    old_files = (
-        [item.relative_to(safe_path(project)).as_posix() for item in source.rglob("*") if item.is_file()]
-        if source.is_dir()
-        else [path]
-    )
     result = rename_path(project, path, new_path)
-    if len(old_files) == 1 and old_files[0] == path:
-        changes = record_rename(project, path, new_path)
-    else:
-        changes = []
-        for old_file in old_files:
-            suffix = old_file[len(path):].lstrip("/")
-            changes.extend(record_rename(project, old_file, f"{new_path}/{suffix}"))
     _publish("workspace:changed", {"project": project, "paths": [path, new_path]})
-    _publish("worktree:changed", {"project": project})
-    return {**result, "changes": changes}
+    _source_control_event(project)
+    return result
 
 
 @capability("folder.create")
@@ -253,6 +233,7 @@ def folder_create(project: str, path: str) -> dict:
     """Create a folder."""
     result = create_folder(project, path)
     _publish("workspace:changed", {"project": project, "paths": [path]})
+    _source_control_event(project)
     return result
 
 
@@ -399,68 +380,339 @@ def _worktree_event(project: str) -> None:
     _publish("worktree:changed", {"project": project})
 
 
+def _source_control_event(project: str, event: str = "git:changed") -> None:
+    _publish(event, {"project": project})
+    _publish("source-control:changed", {"project": project})
+    _worktree_event(project)
+
+
+def _parse_source_id(change_id: str) -> dict[str, str]:
+    if change_id.startswith("proposal:"):
+        _, proposal_id, path = change_id.split(":", 2)
+        return {"source": "proposal", "proposal_id": proposal_id, "path": path}
+    if change_id.startswith("git:"):
+        _, group, path = change_id.split(":", 2)
+        return {"source": "git", "group": group, "path": path}
+    return {"source": "legacy", "change_id": change_id}
+
+
+def _combined_status(project: str) -> dict:
+    if not git_service.is_git_repo(project)["is_repo"]:
+        migrate_json_worktree(project)
+    status = git_service.get_status(project)
+    proposal_rows = proposal_store.proposal_rows(project)
+    proposal_conflicts = [item for item in proposal_rows if item["status"] == "conflict"]
+    proposals = [item for item in proposal_rows if item["status"] != "conflict"]
+    conflicts = [*status["conflicts"], *proposal_conflicts]
+    summary = {
+        "conflicts": len(conflicts),
+        "proposed": len(proposals),
+        "changes": len(status["changes"]),
+        "untracked": len(status["untracked"]),
+        "staged": len(status["staged"]),
+    }
+    revision_source = json.dumps({
+        "head": status.get("head"),
+        "branch": status.get("branch"),
+        "summary": summary,
+        "rows": [
+            item["change_id"]
+            for group in (conflicts, proposals, status["changes"], status["untracked"], status["staged"])
+            for item in group
+        ],
+    }, sort_keys=True)
+    return {
+        **status,
+        "state": "clean" if not sum(summary.values()) else "conflict" if conflicts else "dirty",
+        "summary": summary,
+        "conflicts": conflicts,
+        "proposed": proposals,
+        "revision": hashlib.sha256(revision_source.encode()).hexdigest(),
+        "active_snapshot": status.get("head", "")[:8] if status.get("head") else None,
+        "active_worktree": status.get("branch") or "main",
+    }
+
+
+@capability("git.is_repo")
+def git_is_repo(project: str) -> dict:
+    return git_service.is_git_repo(project)
+
+
+@capability("git.init")
+def git_init(project: str) -> dict:
+    result = git_service.init_repo(project)
+    _source_control_event(project)
+    return result
+
+
+@capability("git.status")
+def git_status(project: str) -> dict:
+    return git_service.get_status(project)
+
+
+@capability("git.diff")
+def git_diff(project: str, path: str, staged: bool = False, conflict: bool = False) -> dict:
+    return git_service.get_diff(project, path, staged, conflict)
+
+
+@capability("git.stage")
+def git_stage(project: str, path: str) -> dict:
+    result = git_service.stage_file(project, path)
+    _source_control_event(project)
+    return result
+
+
+@capability("git.unstage")
+def git_unstage(project: str, path: str) -> dict:
+    result = git_service.unstage_file(project, path)
+    _source_control_event(project)
+    return result
+
+
+@capability("git.stage_all")
+def git_stage_all_capability(project: str) -> dict:
+    result = git_service.stage_all(project)
+    _source_control_event(project)
+    return result
+
+
+@capability("git.unstage_all")
+def git_unstage_all_capability(project: str) -> dict:
+    result = git_service.unstage_all(project)
+    _source_control_event(project)
+    return result
+
+
+@capability("git.stage_hunk")
+def git_stage_hunk(project: str, path: str, hunk_id: str) -> dict:
+    result = git_service.stage_hunk(project, path, hunk_id)
+    _source_control_event(project)
+    return result
+
+
+@capability("git.discard_hunk")
+def git_discard_hunk(project: str, path: str, hunk_id: str) -> dict:
+    result = git_service.discard_hunk(project, path, hunk_id)
+    _publish("workspace:changed", {"project": project, "paths": [path]})
+    _source_control_event(project)
+    return result
+
+
+@capability("git.discard")
+def git_discard(project: str, path: str, staged: bool = False, untracked: bool = False) -> dict:
+    result = git_service.discard_file(project, path, staged=staged, untracked=untracked)
+    _publish("workspace:changed", {"project": project, "paths": [path]})
+    _source_control_event(project)
+    return result
+
+
+@capability("git.discard_all")
+def git_discard_all_capability(project: str, include_untracked: bool = False) -> dict:
+    result = git_service.discard_all(project, include_untracked)
+    _publish("workspace:changed", {"project": project, "paths": []})
+    _source_control_event(project)
+    return result
+
+
+@capability("git.commit")
+def git_commit(project: str, message: str) -> dict:
+    result = git_service.commit(project, message)
+    _source_control_event(project)
+    return result
+
+
+@capability("git.identity")
+def git_identity(project: str) -> dict:
+    return git_service.get_identity(project)
+
+
+@capability("git.set_identity")
+def git_set_identity(project: str, name: str, email: str) -> dict:
+    return git_service.set_identity(project, name, email)
+
+
+@capability("git.branches")
+def git_branches(project: str) -> dict:
+    return git_service.list_branches(project)
+
+
+@capability("git.create_branch")
+def git_create_branch(project: str, name: str, checkout: bool = True) -> dict:
+    result = git_service.create_branch(project, name, checkout)
+    _source_control_event(project)
+    return result
+
+
+@capability("git.checkout")
+def git_checkout(project: str, name: str) -> dict:
+    result = git_service.checkout_branch(project, name)
+    _publish("workspace:changed", {"project": project, "paths": []})
+    _source_control_event(project)
+    return result
+
+
+@capability("git.log")
+def git_log(project: str, limit: int = 50) -> dict:
+    return git_service.get_log(project, limit)
+
+
+@capability("git.file_history")
+def git_file_history(project: str, path: str, limit: int = 50) -> dict:
+    return git_service.get_file_history(project, path, limit)
+
+
+@capability("git.restore_file")
+def git_restore_file(project: str, path: str, ref: str = "HEAD") -> dict:
+    result = git_service.restore_file(project, path, ref)
+    _publish("workspace:changed", {"project": project, "paths": [path]})
+    _source_control_event(project)
+    return result
+
+
+@capability("git.conflicts")
+def git_conflicts(project: str) -> dict:
+    return git_service.get_conflicts(project)
+
+
+@capability("git.accept_current")
+def git_accept_current(project: str, path: str) -> dict:
+    result = git_service.accept_conflict(project, path, "ours")
+    _publish("workspace:changed", {"project": project, "paths": [path]})
+    _source_control_event(project)
+    return result
+
+
+@capability("git.accept_incoming")
+def git_accept_incoming(project: str, path: str) -> dict:
+    result = git_service.accept_conflict(project, path, "theirs")
+    _publish("workspace:changed", {"project": project, "paths": [path]})
+    _source_control_event(project)
+    return result
+
+
+@capability("git.generate_commit_message")
+def git_generate_commit_message(project: str) -> dict:
+    return git_service.generate_commit_message(project)
+
+
+@capability("proposal.list")
+def proposal_list(project: str, include_inactive: bool = False) -> dict:
+    return proposal_store.list_proposals(project, include_inactive)
+
+
+@capability("proposal.diff")
+def proposal_diff(project: str, proposal_id: str, path: str) -> dict:
+    return proposal_store.get_diff(project, proposal_id, path)
+
+
+@capability("proposal.apply")
+def proposal_apply(project: str, proposal_id: str, path: str | None = None) -> dict:
+    result = proposal_store.apply_proposal(project, proposal_id, path)
+    _publish("workspace:changed", {"project": project, "paths": result["applied"]})
+    _source_control_event(project, "proposal:changed")
+    return result
+
+
+@capability("proposal.override_apply")
+def proposal_override_apply(project: str, proposal_id: str, path: str | None = None) -> dict:
+    result = proposal_store.apply_proposal(project, proposal_id, path, override=True)
+    _publish("workspace:changed", {"project": project, "paths": result["applied"]})
+    _source_control_event(project, "proposal:changed")
+    return result
+
+
+@capability("proposal.apply_all")
+def proposal_apply_all(project: str, only_passing: bool = True) -> dict:
+    result = proposal_store.apply_all(project, only_passing)
+    paths = [path for item in result["results"] for path in item["applied"]]
+    _publish("workspace:changed", {"project": project, "paths": paths})
+    _source_control_event(project, "proposal:changed")
+    return result
+
+
+@capability("proposal.discard")
+def proposal_discard(project: str, proposal_id: str, path: str | None = None) -> dict:
+    result = proposal_store.discard_proposal(project, proposal_id, path)
+    _source_control_event(project, "proposal:changed")
+    return result
+
+
+@capability("proposal.discard_all")
+def proposal_discard_all(project: str) -> dict:
+    result = proposal_store.discard_all(project)
+    _source_control_event(project, "proposal:changed")
+    return result
+
+
 @capability("worktree.init")
 def worktree_init(project: str) -> dict:
-    result = init_worktree(project)
-    _worktree_event(project)
+    result = git_service.init_repo(project)
+    _source_control_event(project)
     return result
 
 
 @capability("worktree.status")
 def worktree_status(project: str) -> dict:
-    """Return the indexed JSON worktree status without scanning/writing disk.
-
-    Source Control is now driven by append-only .bob JSON records. File API
-    operations record changes at write/create/delete/rename time, so status
-    reads must be side-effect free. This prevents refresh loops and stops the
-    editor from reloading stale content while a save is settling.
-    """
-    return get_status(project)
+    """Compatibility status backed by Git and Bob proposals."""
+    return _combined_status(project)
 
 
 @capability("worktree.scan")
 def worktree_scan(project: str) -> dict:
-    """Explicitly scan disk for out-of-band changes and update indexed JSON.
-
-    Use this from a manual Refresh/Scan button, not from routine UI polling.
-    """
-    result = detect_manual_changes(project)
-    _worktree_event(project)
-    return result
+    return _combined_status(project)
 
 
 
 
 @capability("worktree.indexed_changes")
 def worktree_indexed_changes(project: str) -> dict:
-    """Return raw indexed JSON worktree records for MCP-driven realtime SCM."""
-    return get_indexed_changes(project)
+    return {
+        "project": project,
+        "git": git_service.get_status(project),
+        "proposals": proposal_store.list_proposals(project, include_inactive=True)["proposals"],
+    }
 
 
 @capability("worktree.get_diff")
 def worktree_get_diff(project: str, change_id: str) -> dict:
+    parsed = _parse_source_id(change_id)
+    if parsed["source"] == "proposal":
+        return proposal_store.get_diff(project, parsed["proposal_id"], parsed["path"])
+    if parsed["source"] == "git":
+        return git_service.get_diff(
+            project,
+            parsed["path"],
+            staged=parsed["group"] == "staged",
+            conflict=parsed["group"] == "conflicts",
+        )
     return get_diff(project, change_id)
 
 
 @capability("worktree.stage_change")
 def worktree_stage(project: str, change_id: str) -> dict:
-    result = stage_change(project, change_id)
-    _worktree_event(project)
-    return result
+    parsed = _parse_source_id(change_id)
+    if parsed["source"] != "git":
+        raise ValueError("Only Git changes can be staged")
+    git_service.stage_file(project, parsed["path"])
+    _source_control_event(project)
+    return _combined_status(project)
 
 
 @capability("worktree.unstage_change")
 def worktree_unstage(project: str, change_id: str) -> dict:
-    result = unstage_change(project, change_id)
-    _worktree_event(project)
-    return result
+    parsed = _parse_source_id(change_id)
+    if parsed["source"] != "git":
+        raise ValueError("Only Git changes can be unstaged")
+    git_service.unstage_file(project, parsed["path"])
+    _source_control_event(project)
+    return _combined_status(project)
 
 
 @capability("worktree.stage_all")
 def worktree_stage_all(project: str) -> dict:
-    result = stage_all(project)
-    _worktree_event(project)
-    return result
+    git_service.stage_all(project)
+    _source_control_event(project)
+    return _combined_status(project)
 
 
 @capability("worktree.stage_many")
@@ -468,18 +720,19 @@ def worktree_stage_many(project: str, change_ids: list[str]) -> dict:
     results, errors = [], []
     for change_id in change_ids:
         try:
-            results.append(stage_change(project, change_id))
+            parsed = _parse_source_id(change_id)
+            results.append(git_service.stage_file(project, parsed["path"]))
         except Exception as exc:
             errors.append({"change_id": change_id, "error": str(exc)})
-    _worktree_event(project)
-    return {"staged": results, "errors": errors, "status": get_status(project)}
+    _source_control_event(project)
+    return {"staged": results, "errors": errors, "status": _combined_status(project)}
 
 
 @capability("worktree.unstage_all")
 def worktree_unstage_all(project: str) -> dict:
-    result = unstage_all(project)
-    _worktree_event(project)
-    return result
+    git_service.unstage_all(project)
+    _source_control_event(project)
+    return _combined_status(project)
 
 
 @capability("worktree.unstage_many")
@@ -487,19 +740,23 @@ def worktree_unstage_many(project: str, change_ids: list[str]) -> dict:
     results, errors = [], []
     for change_id in change_ids:
         try:
-            results.append(unstage_change(project, change_id))
+            parsed = _parse_source_id(change_id)
+            results.append(git_service.unstage_file(project, parsed["path"]))
         except Exception as exc:
             errors.append({"change_id": change_id, "error": str(exc)})
-    _worktree_event(project)
-    return {"unstaged": results, "errors": errors, "status": get_status(project)}
+    _source_control_event(project)
+    return {"unstaged": results, "errors": errors, "status": _combined_status(project)}
 
 
 @capability("worktree.apply_change")
 def worktree_apply(project: str, change_id: str) -> dict:
-    result = apply_change(project, change_id)
-    _publish("workspace:changed", {"project": project, "paths": [result["path"]]})
-    _worktree_event(project)
-    return result
+    parsed = _parse_source_id(change_id)
+    if parsed["source"] != "proposal":
+        raise ValueError("Only Bob proposals can be applied")
+    result = proposal_store.apply_proposal(project, parsed["proposal_id"], parsed["path"])
+    _publish("workspace:changed", {"project": project, "paths": result["applied"]})
+    _source_control_event(project, "proposal:changed")
+    return {**result, "path": parsed["path"]}
 
 
 @capability("worktree.apply_many")
@@ -507,46 +764,60 @@ def worktree_apply_many(project: str, change_ids: list[str], override: bool = Fa
     results, errors = [], []
     for change_id in change_ids:
         try:
-            results.append(apply_change(project, change_id, override))
+            parsed = _parse_source_id(change_id)
+            results.append(proposal_store.apply_proposal(project, parsed["proposal_id"], parsed["path"], override))
         except Exception as exc:
             errors.append({"change_id": change_id, "error": str(exc)})
-    _publish("workspace:changed", {"project": project, "paths": [item["path"] for item in results]})
-    _worktree_event(project)
-    return {"applied": results, "errors": errors, "status": get_status(project)}
+    paths = [path for item in results for path in item["applied"]]
+    _publish("workspace:changed", {"project": project, "paths": paths})
+    _source_control_event(project, "proposal:changed")
+    return {"applied": results, "errors": errors, "status": _combined_status(project)}
 
 
 @capability("worktree.override_and_apply")
 def worktree_override_apply(project: str, change_id: str) -> dict:
-    result = apply_change(project, change_id, override=True)
-    _publish("workspace:changed", {"project": project, "paths": [result["path"]]})
-    _worktree_event(project)
-    return result
+    parsed = _parse_source_id(change_id)
+    result = proposal_store.apply_proposal(project, parsed["proposal_id"], parsed["path"], override=True)
+    _publish("workspace:changed", {"project": project, "paths": result["applied"]})
+    _source_control_event(project, "proposal:changed")
+    return {**result, "path": parsed["path"]}
 
 
 @capability("worktree.apply_passing")
 def worktree_apply_passing(project: str) -> dict:
-    change_ids = [
-        item["change_id"]
-        for item in get_status(project)["proposed"]
-        if item.get("review_status", "PASS") != "FAIL"
-    ]
-    return worktree_apply_many(project, change_ids)
+    return proposal_apply_all(project, only_passing=True)
 
 
 @capability("worktree.apply_all")
 def worktree_apply_all(project: str, override: bool = False) -> dict:
-    result = apply_all(project, override)
-    _publish("workspace:changed", {"project": project, "paths": [item["path"] for item in result["applied"]]})
-    _worktree_event(project)
-    return result
+    if override:
+        results = [
+            proposal_store.apply_proposal(project, item["proposal_id"], override=True)
+            for item in proposal_store.list_proposals(project)["proposals"]
+        ]
+        _source_control_event(project, "proposal:changed")
+        return {"project": project, "results": results}
+    return proposal_apply_all(project, only_passing=False)
 
 
 @capability("worktree.discard_change")
 def worktree_discard(project: str, change_id: str) -> dict:
-    result = discard_change(project, change_id)
-    _publish("workspace:changed", {"project": project, "paths": [result["path"]]})
-    _worktree_event(project)
-    return result
+    parsed = _parse_source_id(change_id)
+    if parsed["source"] == "proposal":
+        result = proposal_store.discard_proposal(project, parsed["proposal_id"], parsed["path"])
+        _source_control_event(project, "proposal:changed")
+        return {**result, "path": parsed["path"]}
+    if parsed["source"] == "git":
+        git_service.discard_file(
+            project,
+            parsed["path"],
+            staged=parsed["group"] == "staged",
+            untracked=parsed["group"] == "untracked",
+        )
+        _publish("workspace:changed", {"project": project, "paths": [parsed["path"]]})
+        _source_control_event(project)
+        return {"project": project, "path": parsed["path"]}
+    return discard_change(project, change_id)
 
 
 @capability("worktree.discard_many")
@@ -554,130 +825,153 @@ def worktree_discard_many(project: str, change_ids: list[str]) -> dict:
     results, errors = [], []
     for change_id in change_ids:
         try:
-            results.append(discard_change(project, change_id))
+            results.append(worktree_discard(project, change_id))
         except Exception as exc:
             errors.append({"change_id": change_id, "error": str(exc)})
-    _publish("workspace:changed", {"project": project, "paths": [item["path"] for item in results]})
-    _worktree_event(project)
-    return {"discarded": results, "errors": errors, "status": get_status(project)}
+    _source_control_event(project)
+    return {"discarded": results, "errors": errors, "status": _combined_status(project)}
 
 
 @capability("worktree.discard_all")
 def worktree_discard_all(project: str) -> dict:
-    result = discard_all(project)
+    git_result = git_service.discard_all(project, include_untracked=True)
+    proposal_result = proposal_store.discard_all(project)
     _publish("workspace:changed", {"project": project, "paths": []})
-    _worktree_event(project)
-    return result
+    _source_control_event(project)
+    return {"project": project, "git": git_result, "proposals": proposal_result}
 
 
 @capability("worktree.create_snapshot")
 def worktree_snapshot(project: str, label: str | None = None, message: str | None = None) -> dict:
-    result = create_snapshot(project, label, message)
-    _worktree_event(project)
-    return result
+    return git_commit(project, message or label or "")
 
 
 @capability("worktree.history")
 def worktree_history(project: str) -> dict:
-    return get_history(project)
+    legacy = get_history(project)
+    return {
+        "commits": git_service.get_log(project)["commits"],
+        "runs": legacy.get("runs", []),
+        "proposals": proposal_store.list_proposals(project, include_inactive=True)["proposals"],
+        "snapshots": [],
+    }
 
 
 @capability("worktree.file_history")
 def worktree_file_history(project: str, path: str) -> dict:
-    return get_file_history(project, path)
+    history = git_service.get_file_history(project, path)
+    return {**history, "changes": history["commits"]}
 
 
 @capability("worktree.file_status")
 def worktree_file_status(project: str, path: str) -> dict:
-    status = get_status(project)
+    status = _combined_status(project)
     matches = []
-    for group in ("conflicts", "proposed", "changes", "staged"):
+    for group in ("conflicts", "proposed", "changes", "untracked", "staged"):
         matches.extend({**item, "group": group} for item in status[group] if item["path"] == path)
     return {"project": project, "path": path, "changes": matches}
 
 
 @capability("worktree.get_hunks")
 def worktree_get_hunks(project: str, change_id: str) -> dict:
-    diff = get_diff(project, change_id)
+    diff = worktree_get_diff(project, change_id)
     return {"project": project, "change_id": change_id, "hunks": diff.get("hunks", [])}
 
 
 @capability("worktree.stage_hunk")
 def worktree_stage_hunk(project: str, change_id: str, hunk_id: str) -> dict:
-    result = stage_hunk(project, change_id, hunk_id)
-    _worktree_event(project)
+    parsed = _parse_source_id(change_id)
+    result = git_service.stage_hunk(project, parsed["path"], hunk_id)
+    _source_control_event(project)
     return result
 
 
 @capability("worktree.discard_hunk")
 def worktree_discard_hunk(project: str, change_id: str, hunk_id: str) -> dict:
-    result = discard_hunk(project, change_id, hunk_id)
-    _publish("workspace:changed", {"project": project, "paths": [result["path"]] if result else []})
-    _worktree_event(project)
+    parsed = _parse_source_id(change_id)
+    result = git_service.discard_hunk(project, parsed["path"], hunk_id)
+    _publish("workspace:changed", {"project": project, "paths": [parsed["path"]]})
+    _source_control_event(project)
     return result
 
 
 @capability("worktree.apply_hunk")
 def worktree_apply_hunk(project: str, change_id: str, hunk_id: str) -> dict:
-    result = apply_hunk(project, change_id, hunk_id)
-    _publish("workspace:changed", {"project": project, "paths": [result["path"]]})
-    _worktree_event(project)
-    return result
+    raise ValueError("Proposal hunk apply is not available yet; apply the proposal file")
 
 
 @capability("worktree.apply_all_hunks")
 def worktree_apply_all_hunks(project: str, change_id: str) -> dict:
-    result = apply_all_hunks(project, change_id)
-    _publish("workspace:changed", {"project": project, "paths": [result["path"]]})
-    _worktree_event(project)
-    return result
+    return worktree_apply(project, change_id)
 
 
 @capability("worktree.generate_checkpoint_message")
 def worktree_generate_checkpoint_message(project: str) -> dict:
-    status = get_status(project)
-    staged = status["staged"]
-    if not staged:
-        return {"message": "Checkpoint"}
-    actions = {"add": "Add", "modify": "Update", "delete": "Remove"}
-    first = staged[0]
-    if len(staged) == 1:
-        return {"message": f"{actions.get(first['action'], 'Update')} {first['path']}"}
-    return {"message": f"Update {len(staged)} files"}
+    return git_service.generate_commit_message(project)
 
 
 @capability("worktree.restore_file")
 def worktree_restore_file(project: str, path: str, snapshot_id: str | None = None) -> dict:
-    result = restore_file(project, path, snapshot_id)
-    _publish("workspace:changed", {"project": project, "paths": [path]})
-    _worktree_event(project)
-    return result
+    return git_restore_file(project, path, snapshot_id or "HEAD")
 
 
 @capability("worktree.compare_with_snapshot")
 def worktree_compare_snapshot(project: str, path: str, snapshot_id: str | None = None) -> dict:
-    return compare_with_snapshot(project, path, snapshot_id)
+    ref = snapshot_id or "HEAD"
+    before = git_service.run_git(project, ["show", f"{ref}:{path}"])["stdout"]
+    after = safe_path(project, path).read_text(encoding="utf-8") if safe_path(project, path).is_file() else ""
+    return {
+        "project": project,
+        "path": path,
+        "snapshot_id": ref,
+        "before_content": before,
+        "after_content": after,
+        "diff": "",
+    }
 
 
 @capability("worktree.restore_snapshot")
 def worktree_restore_snapshot(project: str, snapshot_id: str) -> dict:
-    result = restore_snapshot(project, snapshot_id)
-    _publish("workspace:changed", {"project": project, "paths": []})
-    _worktree_event(project)
-    return result
+    raise ValueError("Whole-commit restore is intentionally not exposed; restore individual files")
 
 
 @capability("worktree.ignore_path")
 def worktree_ignore_path(project: str, path: str) -> dict:
-    result = ignore_path(project, path)
-    _publish("workspace:changed", {"project": project, "paths": [".bobignore"]})
-    _worktree_event(project)
-    return result
+    safe_path(project, path)
+    ignore_file = safe_path(project, ".gitignore")
+    existing = ignore_file.read_text(encoding="utf-8").splitlines() if ignore_file.exists() else []
+    pattern = path.replace("\\", "/").strip("/")
+    if safe_path(project, path).is_dir():
+        pattern += "/"
+    if pattern not in existing:
+        existing.append(pattern)
+        ignore_file.write_text("\n".join(existing).rstrip() + "\n", encoding="utf-8", newline="\n")
+    _publish("workspace:changed", {"project": project, "paths": [".gitignore"]})
+    _source_control_event(project)
+    return {"project": project, "ignored": pattern}
 
 
 @capability("worktree.timeline")
 def worktree_timeline(project: str) -> dict:
-    return get_timeline(project)
+    events = []
+    for commit_item in git_service.get_log(project)["commits"]:
+        events.append({
+            "type": "commit",
+            "id": commit_item["hash"],
+            "label": commit_item["message"],
+            "created_at": commit_item["created_at"],
+        })
+    for proposal in proposal_store.list_proposals(project, include_inactive=True)["proposals"]:
+        events.append({
+            "type": "proposal",
+            "id": proposal["proposal_id"],
+            "label": proposal.get("summary") or f"{proposal['status']} proposal",
+            "created_at": proposal.get("updated_at") or proposal.get("created_at"),
+        })
+    legacy = get_timeline(project)
+    events.extend(item for item in legacy["events"] if item["type"] in {"run", "model"})
+    events.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+    return {"project": project, "events": events}
 
 
 
@@ -691,14 +985,43 @@ def model_get_config() -> dict:
 @capability("model.set_config")
 def model_set_config(
     base_url: str | None = None,
+    health_path: str | None = None,
+    capabilities_path: str | None = None,
+    chat_path: str | None = None,
     plan_path: str | None = None,
     run_path: str | None = None,
+    stream_path: str | None = None,
+    run_status_path: str | None = None,
+    cancel_path: str | None = None,
     timeout: int | str | None = None,
+    max_iterations: int | str | None = None,
+    context_mode: str | None = None,
+    context_budget: int | str | None = None,
+    prefer_streaming: bool | None = None,
+    keep_model_loaded: bool | None = None,
     token: str | None = None,
     headers_json: str | dict | None = None,
 ) -> dict:
     """Persist Colab/model connection settings used by Bob chat and model runs."""
-    config = save_model_config(base_url, plan_path, run_path, timeout, token, headers_json)
+    config = save_model_config(
+        base_url=base_url,
+        health_path=health_path,
+        capabilities_path=capabilities_path,
+        chat_path=chat_path,
+        plan_path=plan_path,
+        run_path=run_path,
+        stream_path=stream_path,
+        run_status_path=run_status_path,
+        cancel_path=cancel_path,
+        timeout=timeout,
+        max_iterations=max_iterations,
+        context_mode=context_mode,
+        context_budget=context_budget,
+        prefer_streaming=prefer_streaming,
+        keep_model_loaded=keep_model_loaded,
+        token=token,
+        headers_json=headers_json,
+    )
     _publish("model:config", {"project": "*", "config": config})
     return config
 
@@ -706,28 +1029,50 @@ def model_set_config(
 @capability("model.health")
 def model_health() -> dict:
     """Check whether the configured Colab endpoint is reachable."""
-    import json
-    import urllib.error
-    import urllib.request
-
     config = read_model_config(include_secret=True)
     if not config.get("base_url"):
         return {"configured": False, "ok": False, "message": "No Colab base URL configured."}
-    url = config["base_url"].rstrip("/") + "/health"
-    headers = {}
-    if config.get("token"):
-        headers["Authorization"] = f"Bearer {config['token']}"
     try:
-        req = urllib.request.Request(url, headers=headers, method="GET")
-        with urllib.request.urlopen(req, timeout=min(int(config.get("timeout") or 600), 20)) as response:
-            body = response.read().decode("utf-8", errors="replace")
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            payload = {"raw": body[:500]}
-        return {"configured": True, "ok": True, "url": url, "response": payload}
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        return {"configured": True, "ok": False, "url": url, "message": str(exc)}
+        payload = ColabAdapter().health()
+        return {"configured": True, "ok": bool(payload.get("ok", True)), "response": payload}
+    except Exception as exc:
+        return {"configured": True, "ok": False, "message": str(exc)}
+
+
+@capability("model.capabilities")
+def model_capabilities() -> dict:
+    config = read_model_config()
+    if not config.get("configured"):
+        return {"configured": False, "contract_version": None, "streaming": False}
+    try:
+        return {"configured": True, **ColabAdapter().capabilities()}
+    except Exception as exc:
+        return {"configured": True, "contract_version": "legacy", "streaming": False, "message": str(exc)}
+
+
+@capability("model.chat")
+def model_chat(project: str, message: str, active_path: str | None = None) -> dict:
+    if not message.strip():
+        raise ValueError("Message is required")
+    config = read_model_config()
+    context = _limited_model_context(project, active_path, int(config.get("context_budget", 160000)))
+    payload = {
+        "run_id": "chat",
+        "project": project,
+        "user_prompt": message,
+        "active_path": active_path,
+        "context_mode": config.get("context_mode", "workspace"),
+        **context,
+    }
+    try:
+        result = ColabAdapter().chat(payload)
+        return {
+            "reply": result.get("reply") or result.get("message") or result.get("response") or "",
+            "provider": result.get("provider", "colab"),
+            **result,
+        }
+    except Exception:
+        return assistant_chat(message, project, active_path)
 
 
 @capability("model.plan")

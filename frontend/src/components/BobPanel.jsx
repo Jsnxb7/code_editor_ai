@@ -31,9 +31,20 @@ const nextId = () => ++msgSeq;
 
 const emptyConfig = {
   base_url: "",
+  health_path: "/health",
+  capabilities_path: "/capabilities",
+  chat_path: "/chat",
   plan_path: "/plan",
   run_path: "/run-agent",
+  stream_path: "/run-agent/stream",
+  run_status_path: "/runs/{run_id}",
+  cancel_path: "/runs/{run_id}/cancel",
   timeout: 600,
+  max_iterations: 5,
+  context_mode: "workspace",
+  context_budget: 160000,
+  prefer_streaming: true,
+  keep_model_loaded: true,
   headers_json: "{}",
   configured: false,
   token_set: false,
@@ -101,7 +112,7 @@ function ConnectionSettings({ config, setConfig, onSave, onHealth, saving, healt
     <section className="bob-connection-card">
       <button className="bob-connection-title" onClick={() => setOpen((value) => !value)}>
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <Settings2 size={14} /> Model connection
+        <Settings2 size={14} /> Colab runtime
         <span className={health?.ok ? "connection-ok" : config.configured ? "connection-warn" : "connection-off"}>{statusLabel}</span>
       </button>
       {open && (
@@ -116,18 +127,38 @@ function ConnectionSettings({ config, setConfig, onSave, onHealth, saving, healt
           </label>
           <div className="bob-connection-grid">
             <label>
-              Plan path
+              Health path
               <input
-                value={config.plan_path || "/plan"}
-                onChange={(event) => setConfig((value) => ({ ...value, plan_path: event.target.value }))}
+                value={config.health_path || "/health"}
+                onChange={(event) => setConfig((value) => ({ ...value, health_path: event.target.value }))}
               />
             </label>
             <label>
-              Run path
+              Capabilities path
               <input
-                value={config.run_path || "/run-agent"}
-                onChange={(event) => setConfig((value) => ({ ...value, run_path: event.target.value }))}
+                value={config.capabilities_path || "/capabilities"}
+                onChange={(event) => setConfig((value) => ({ ...value, capabilities_path: event.target.value }))}
               />
+            </label>
+          </div>
+          <div className="bob-connection-grid">
+            <label>
+              Chat path
+              <input value={config.chat_path || "/chat"} onChange={(event) => setConfig((value) => ({ ...value, chat_path: event.target.value }))} />
+            </label>
+            <label>
+              Plan path
+              <input value={config.plan_path || "/plan"} onChange={(event) => setConfig((value) => ({ ...value, plan_path: event.target.value }))} />
+            </label>
+          </div>
+          <div className="bob-connection-grid">
+            <label>
+              Run path
+              <input value={config.run_path || "/run-agent"} onChange={(event) => setConfig((value) => ({ ...value, run_path: event.target.value }))} />
+            </label>
+            <label>
+              Stream path
+              <input value={config.stream_path || "/run-agent/stream"} onChange={(event) => setConfig((value) => ({ ...value, stream_path: event.target.value }))} />
             </label>
           </div>
           <div className="bob-connection-grid">
@@ -142,6 +173,39 @@ function ConnectionSettings({ config, setConfig, onSave, onHealth, saving, healt
               />
             </label>
             <label>
+              Maximum iterations
+              <input
+                type="number"
+                min="1"
+                max="20"
+                value={config.max_iterations || 5}
+                onChange={(event) => setConfig((value) => ({ ...value, max_iterations: event.target.value }))}
+              />
+            </label>
+          </div>
+          <div className="bob-connection-grid">
+            <label>
+              Context
+              <select value={config.context_mode || "workspace"} onChange={(event) => setConfig((value) => ({ ...value, context_mode: event.target.value }))}>
+                <option value="active">Active file</option>
+                <option value="open">Open files</option>
+                <option value="workspace">Workspace</option>
+              </select>
+            </label>
+            <label>
+              Context byte budget
+              <input
+                type="number"
+                min="10000"
+                max="1000000"
+                step="10000"
+                value={config.context_budget || 160000}
+                onChange={(event) => setConfig((value) => ({ ...value, context_budget: event.target.value }))}
+              />
+            </label>
+          </div>
+          <div className="bob-connection-grid">
+            <label>
               Optional bearer token
               <input
                 type="password"
@@ -150,18 +214,26 @@ function ConnectionSettings({ config, setConfig, onSave, onHealth, saving, healt
                 onChange={(event) => setTokenInput(event.target.value)}
               />
             </label>
+            <label>
+              Extra headers JSON
+              <input
+                value={config.headers_json || "{}"}
+                spellCheck="false"
+                onChange={(event) => setConfig((value) => ({ ...value, headers_json: event.target.value }))}
+              />
+            </label>
           </div>
-          <label>
-            Extra headers JSON
-            <input
-              value={config.headers_json || "{}"}
-              spellCheck="false"
-              onChange={(event) => setConfig((value) => ({ ...value, headers_json: event.target.value }))}
-            />
-          </label>
           <label className="bob-checkbox-row">
             <input type="checkbox" checked={clearToken} onChange={(event) => setClearToken(event.target.checked)} />
             Clear saved bearer token on save
+          </label>
+          <label className="bob-checkbox-row">
+            <input type="checkbox" checked={config.prefer_streaming !== false} onChange={(event) => setConfig((value) => ({ ...value, prefer_streaming: event.target.checked }))} />
+            Prefer realtime run events
+          </label>
+          <label className="bob-checkbox-row">
+            <input type="checkbox" checked={config.keep_model_loaded !== false} onChange={(event) => setConfig((value) => ({ ...value, keep_model_loaded: event.target.checked }))} />
+            Keep model loaded between requests
           </label>
           <div className="bob-connection-actions">
             <button onClick={onSave} disabled={saving}>
@@ -176,7 +248,9 @@ function ConnectionSettings({ config, setConfig, onSave, onHealth, saving, healt
           </div>
           {health && (
             <div className={`bob-health-box ${health.ok ? "ok" : "fail"}`}>
-              {health.ok ? "Health check passed." : health.message || "Health check failed."}
+              {health.ok
+                ? `${health.model || "Colab runtime"} · ${health.contract_version || "legacy contract"}${health.streaming ? " · streaming" : ""}`
+                : health.message || "Health check failed."}
             </div>
           )}
         </div>
@@ -296,9 +370,20 @@ export default function BobPanel() {
     try {
       const payload = {
         base_url: config.base_url || "",
+        health_path: config.health_path || "/health",
+        capabilities_path: config.capabilities_path || "/capabilities",
+        chat_path: config.chat_path || "/chat",
         plan_path: config.plan_path || "/plan",
         run_path: config.run_path || "/run-agent",
+        stream_path: config.stream_path || "/run-agent/stream",
+        run_status_path: config.run_status_path || "/runs/{run_id}",
+        cancel_path: config.cancel_path || "/runs/{run_id}/cancel",
         timeout: config.timeout || 600,
+        max_iterations: config.max_iterations || 5,
+        context_mode: config.context_mode || "workspace",
+        context_budget: config.context_budget || 160000,
+        prefer_streaming: config.prefer_streaming !== false,
+        keep_model_loaded: config.keep_model_loaded !== false,
         headers_json: config.headers_json || "{}",
       };
       if (tokenInput) payload.token = tokenInput;
@@ -319,7 +404,14 @@ export default function BobPanel() {
     setSavingConfig(true);
     try {
       const result = await api.modelHealth();
-      setHealth(result);
+      const capabilities = result.ok ? await api.modelCapabilities() : {};
+      const response = result.response || {};
+      setHealth({
+        ...result,
+        ...capabilities,
+        model: response.model || capabilities.model,
+        contract_version: response.contract_version || capabilities.contract_version,
+      });
       pushToast(result.ok ? "Colab health check passed" : "Colab health check failed", result.ok ? "success" : "error");
     } catch (error) {
       setHealth({ ok: false, message: error.message });
@@ -361,7 +453,7 @@ export default function BobPanel() {
   return (
     <aside className="bob-panel">
       <div className="sidebar-header">BOB ASSISTANT</div>
-      <div className="bob-toolchain-note">MCP command plane · JSON worktree proposals · Monaco diff review · Colab model endpoint</div>
+      <div className="bob-toolchain-note">MCP tools · Git source control · reviewable proposals · Colab runtime</div>
 
       <ConnectionSettings
         config={config}

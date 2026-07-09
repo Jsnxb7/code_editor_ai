@@ -75,6 +75,7 @@ const STATUS_DECORATIONS = {
   conflicts: { label: "C", className: "status-conflict", title: "Conflict" },
   proposed: { label: "P", className: "status-proposed", title: "Bob proposal" },
   changes: { add: "A", modify: "M", delete: "D", rename: "R", className: "status-changed", title: "Changed" },
+  untracked: { label: "U", className: "status-changed", title: "Untracked" },
   staged: { add: "A", modify: "M", delete: "D", rename: "R", className: "status-staged", title: "Staged" },
 };
 
@@ -190,7 +191,7 @@ export function IdeProvider({ children }) {
   const sourceControlIndex = useMemo(() => {
     const byPath = new Map();
     const folderCounts = new Map();
-    for (const group of ["conflicts", "proposed", "changes", "staged"]) {
+    for (const group of ["conflicts", "proposed", "changes", "untracked", "staged"]) {
       for (const change of worktreeStatus?.[group] || []) {
         if (!byPath.has(change.path)) byPath.set(change.path, decorationFor(group, change));
         const parts = change.path.split("/");
@@ -282,6 +283,9 @@ export function IdeProvider({ children }) {
     socket.on("connect", join);
     socket.on("workspace:changed", onWorkspaceChanged);
     socket.on("worktree:changed", onWorktreeChanged);
+    socket.on("source-control:changed", onWorktreeChanged);
+    socket.on("git:changed", onWorktreeChanged);
+    socket.on("proposal:changed", onWorktreeChanged);
     socket.on("editor:change", onEditorChanged);
     window.addEventListener("focus", onFocus);
     if (socket.connected) join();
@@ -293,6 +297,9 @@ export function IdeProvider({ children }) {
       socket.off("connect", join);
       socket.off("workspace:changed", onWorkspaceChanged);
       socket.off("worktree:changed", onWorktreeChanged);
+      socket.off("source-control:changed", onWorktreeChanged);
+      socket.off("git:changed", onWorktreeChanged);
+      socket.off("proposal:changed", onWorktreeChanged);
       socket.off("editor:change", onEditorChanged);
       window.removeEventListener("focus", onFocus);
     };

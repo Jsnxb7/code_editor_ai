@@ -1,0 +1,17 @@
+.bob/proposals/
+.bob/legacy-json-worktree/
+.bob/runs.json
+.bob/model_runs.json
+.bob/chat_history.json
+.bob/model_config.json
+.bob/tmp/
+.bob/model_cache/
+node_modules/
+dist/
+build/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+.env.local

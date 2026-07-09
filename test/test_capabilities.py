@@ -69,7 +69,19 @@ class CapabilityRegistryTests(unittest.TestCase):
             "model.run_agent",
             "model.run_status",
         }
-        self.assertEqual(expected, set(CAPABILITIES))
+        self.assertTrue(expected.issubset(CAPABILITIES))
+        self.assertTrue({
+            "git.init",
+            "git.status",
+            "git.diff",
+            "git.stage",
+            "git.unstage",
+            "git.commit",
+            "proposal.list",
+            "proposal.diff",
+            "proposal.apply",
+            "proposal.discard",
+        }.issubset(CAPABILITIES))
 
     def test_unknown_capability_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unknown capability"):

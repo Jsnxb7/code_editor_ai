@@ -200,7 +200,7 @@ export default function Sidebar() {
   };
 
   const ignoreExplorerPath = async (path) => {
-    const ok = await confirmDialog(`Add "${path}" to .bobignore?`);
+    const ok = await confirmDialog(`Add "${path}" to .gitignore?`);
     if (!ok) return;
     try {
       await api.worktreeIgnorePath(currentProject, path);
@@ -234,7 +234,7 @@ export default function Sidebar() {
             ? [
                 { divider: true },
                 { label: "Compare Folder in Source Control", onClick: () => { setSidebarView("sourceControl"); setSidebarCollapsed(false); } },
-                { label: "Add Folder to .bobignore", onClick: () => ignoreExplorerPath(menu.item.path) },
+                { label: "Add Folder to .gitignore", onClick: () => ignoreExplorerPath(menu.item.path) },
                 { divider: true },
                 { label: "Rename", onClick: () => startInlineRename(menu.item) },
                 { label: "Delete", danger: true, onClick: () => doDelete(menu.item) },
@@ -254,7 +254,7 @@ export default function Sidebar() {
           { label: "New Folder Here", onClick: () => startInlineNew(folderOf(menu.item.path), "folder") },
           { divider: true },
           { label: "Rename", onClick: () => startInlineRename(menu.item) },
-          { label: "Add to .bobignore", onClick: () => ignoreExplorerPath(menu.item.path) },
+          { label: "Add to .gitignore", onClick: () => ignoreExplorerPath(menu.item.path) },
           { label: "Delete", danger: true, onClick: () => doDelete(menu.item) },
         ]
     : [];
