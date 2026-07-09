@@ -33,7 +33,14 @@ except ImportError:
     emit = None
     SocketIO = None
 
-socketio = SocketIO(cors_allowed_origins="*", async_mode="threading") if SocketIO else None
+# Werkzeug's dev server often fails direct websocket upgrades on Windows.
+# Bob uses MCP/JSON polling for realtime source control, so Socket.IO is kept
+# on long-polling transport for terminal/editor/model convenience events.
+socketio = SocketIO(
+    cors_allowed_origins="*",
+    async_mode="threading",
+    allow_upgrades=False,
+) if SocketIO else None
 registry = SessionRegistry()
 _watcher_started = False
 

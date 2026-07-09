@@ -2,7 +2,7 @@
 
 The IDE can still be configured through environment variables, but the Bob chat
 panel can now save a local runtime config so demonstrations do not require users
-to restart Flask every time the Colab/ngrok URL changes.
+to restart the Python MCP service every time the Colab/ngrok URL changes.
 """
 
 from __future__ import annotations

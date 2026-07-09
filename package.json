@@ -1,0 +1,33 @@
+{
+  "name": "bob-ide",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:python": "node scripts/run-python.mjs mcp_server.py --transport streamable-http --host 127.0.0.1 --port 8001",
+    "dev:node": "node node-server/start.js",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev": "concurrently -k -n python,node,react -c yellow,cyan,green \"npm:dev:python\" \"npm:dev:node\" \"npm:dev:frontend\"",
+    "build": "npm --prefix frontend run build",
+    "start": "node node-server/start.js",
+    "test:python": "node scripts/run-python.mjs -m unittest discover -s test",
+    "test:node": "node --test node-server/test/*.test.js",
+    "test:contract": "node scripts/verify-api-contract.mjs",
+    "test:live": "node scripts/live-smoke.mjs",
+    "lint": "npm --prefix frontend run lint",
+    "test": "npm run test:python && npm run test:node && npm run test:contract && npm run lint && npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "chokidar": "^4.0.3",
+    "express": "^5.1.0",
+    "node-pty": "^1.1.0",
+    "pyright": "^1.1.408",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "socket.io-client": "^4.8.1",
+    "supertest": "^7.1.4"
+  }
+}

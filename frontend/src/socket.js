@@ -8,7 +8,15 @@ export function getSocket() {
       autoConnect: true,
       reconnection: true,
       transports: ["websocket", "polling"],
+      timeout: 10000,
     });
   }
   return socket;
+}
+
+export function closeSocket() {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
 }

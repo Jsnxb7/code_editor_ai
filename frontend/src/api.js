@@ -39,13 +39,22 @@ export const api = {
   renameFile: (project, path, newPath) =>
     invoke("file.rename", { project, path, new_path: newPath }),
   createFolder: (project, path) => invoke("folder.create", { project, path }),
+  deleteFolder: (project, path) => invoke("folder.delete", { project, path }),
+  renameFolder: (project, path, newPath) =>
+    invoke("folder.rename", { project, path, new_path: newPath }),
+  listFiles: (project) => invoke("workspace.list_files", { project }),
   validate: (path, content) =>
     invoke("code.validate", { path, content }),
   runPytest: (project) => invoke("test.pytest", { project }),
+  runPython: (project, path, timeout = 15) =>
+    invoke("code.run_python", { project, path, timeout }),
+  stopPython: (project, path) => invoke("code.stop_python", { project, path }),
   search: (project, query) => invoke("code.search", { project, query }),
   bobChat: (project, message, activePath) =>
     invoke("assistant.chat", { project, message, active_path: activePath }),
   worktreeStatus: (project) => invoke("worktree.status", { project }),
+  worktreeScan: (project) => invoke("worktree.scan", { project }),
+  worktreeIndexedChanges: (project) => invoke("worktree.indexed_changes", { project }),
   worktreeDiff: (project, changeId) =>
     invoke("worktree.get_diff", { project, change_id: changeId }),
   worktreeStage: (project, changeId) =>

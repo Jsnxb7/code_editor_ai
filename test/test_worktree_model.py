@@ -152,7 +152,7 @@ class WorktreeModelTests(unittest.TestCase):
 
         large = self.root / "large.txt"
         large.write_text("x" * (MAX_FILE_SIZE + 1), encoding="utf-8")
-        status = invoke("worktree.status", {"project": self.project})
+        status = invoke("worktree.scan", {"project": self.project})
         large_change = next(item for item in status["changes"] if item["path"] == "large.txt")
         self.assertTrue(large_change["large_file"])
         self.assertNotIn("after_blob", large_change)

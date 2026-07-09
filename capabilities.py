@@ -12,11 +12,12 @@ import subprocess
 from typing import Any, Callable
 
 from config import WORKSPACE_DIR
-from bob_core.command_runner import run_pytest, run_python
+from bob_core.command_runner import run_pytest, run_python, stop_python
 from bob_core.file_manager import (
     create_file,
     create_folder,
     delete_path,
+    list_files,
     list_projects,
     read_file,
     rename_path,
@@ -40,6 +41,7 @@ from bob_core.json_worktree import (
     get_file_history,
     get_history,
     get_status,
+    get_indexed_changes,
     get_timeline,
     ignore_path,
     init_worktree,
@@ -172,6 +174,12 @@ def workspace_tree(project: str = "sample_project") -> dict:
     return scan_tree(project)
 
 
+@capability("workspace.list_files")
+def workspace_list_files(project: str = "sample_project") -> dict:
+    """List editable files in a workspace."""
+    return {"files": list_files(project)}
+
+
 @capability("file.read")
 def file_read(project: str, path: str) -> dict:
     """Read an editable text file."""
@@ -248,6 +256,18 @@ def folder_create(project: str, path: str) -> dict:
     return result
 
 
+@capability("folder.delete")
+def folder_delete(project: str, path: str) -> dict:
+    """Delete a workspace folder and record its file changes."""
+    return file_delete(project, path)
+
+
+@capability("folder.rename")
+def folder_rename(project: str, path: str, new_path: str) -> dict:
+    """Rename a workspace folder and record its file changes."""
+    return file_rename(project, path, new_path)
+
+
 @capability("code.validate")
 def code_validate(path: str, content: str) -> dict:
     """Validate Python or JSON source text."""
@@ -264,6 +284,12 @@ def code_search(project: str, query: str) -> dict:
 def code_run_python(project: str, path: str, timeout: int = 15) -> dict:
     """Run a Python file and return captured output."""
     return run_python(project, path, timeout)
+
+
+@capability("code.stop_python")
+def code_stop_python(project: str, path: str) -> dict:
+    """Stop a Python process previously started for a file."""
+    return stop_python(project, path)
 
 
 @capability("terminal.execute")
@@ -382,7 +408,33 @@ def worktree_init(project: str) -> dict:
 
 @capability("worktree.status")
 def worktree_status(project: str) -> dict:
-    return detect_manual_changes(project)
+    """Return the indexed JSON worktree status without scanning/writing disk.
+
+    Source Control is now driven by append-only .bob JSON records. File API
+    operations record changes at write/create/delete/rename time, so status
+    reads must be side-effect free. This prevents refresh loops and stops the
+    editor from reloading stale content while a save is settling.
+    """
+    return get_status(project)
+
+
+@capability("worktree.scan")
+def worktree_scan(project: str) -> dict:
+    """Explicitly scan disk for out-of-band changes and update indexed JSON.
+
+    Use this from a manual Refresh/Scan button, not from routine UI polling.
+    """
+    result = detect_manual_changes(project)
+    _worktree_event(project)
+    return result
+
+
+
+
+@capability("worktree.indexed_changes")
+def worktree_indexed_changes(project: str) -> dict:
+    """Return raw indexed JSON worktree records for MCP-driven realtime SCM."""
+    return get_indexed_changes(project)
 
 
 @capability("worktree.get_diff")

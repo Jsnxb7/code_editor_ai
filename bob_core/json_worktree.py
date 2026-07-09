@@ -140,8 +140,37 @@ def _read(project: str, name: str, key: str) -> dict:
     )
 
 
+def _touch_index(project: str) -> None:
+    """Update the project worktree revision without consuming an id counter."""
+    path = _meta(project) / "index.json"
+    data = load_json(path, _default_index(project))
+    data["updated_at"] = _now()
+    save_json_atomic(path, data)
+
+
+def _worktree_revision(project: str) -> dict[str, Any]:
+    """Return a cheap JSON-backed revision marker for MCP polling."""
+    meta = _meta(project)
+    index = load_json(meta / "index.json", _default_index(project))
+    files = ["index.json", "changes.json", "staged.json", "snapshots.json", "runs.json", "model_runs.json"]
+    mtime = 0
+    for name in files:
+        path = meta / name
+        try:
+            mtime = max(mtime, path.stat().st_mtime_ns)
+        except OSError:
+            pass
+    return {
+        "revision": f"{index.get('updated_at', '')}:{mtime}",
+        "updated_at": index.get("updated_at"),
+        "mtime_ns": mtime,
+    }
+
+
 def _write(project: str, name: str, data: dict) -> None:
     save_json_atomic(_meta(project) / name, data)
+    if name != "index.json":
+        _touch_index(project)
 
 
 def _next_id(project: str, counter: str, prefix: str) -> tuple[int, str]:
@@ -521,13 +550,33 @@ def get_status(project: str) -> dict:
         summary = {key: len(value) for key, value in grouped.items()}
         state = "clean" if not changes else "conflict" if grouped["conflicts"] else "dirty"
         snapshot, _ = _latest_snapshot(project)
+        revision = _worktree_revision(project)
         return {
             "project": project,
             "state": state,
             "summary": summary,
             "active_snapshot": snapshot.get("snapshot_id"),
             "active_worktree": "main",
+            **revision,
             **grouped,
+        }
+
+
+def get_indexed_changes(project: str) -> dict:
+    """Read the indexed JSON worktree directly for MCP/SCM synchronization."""
+    with project_lock(project):
+        init_worktree(project)
+        data = _read(project, "changes.json", "changes")
+        staged = _read(project, "staged.json", "staged")
+        snapshots = _read(project, "snapshots.json", "snapshots")
+        runs = _read(project, "runs.json", "runs")
+        return {
+            "project": project,
+            **_worktree_revision(project),
+            "changes": data.get("changes", []),
+            "staged": staged.get("staged", []),
+            "snapshots": snapshots.get("snapshots", []),
+            "runs": runs.get("runs", []),
         }
 
 
@@ -700,6 +749,14 @@ def apply_all_hunks(project: str, change_id: str) -> dict:
 
 
 def apply_change(project: str, change_id: str, override: bool = False) -> dict:
+    """Apply a Bob proposal to disk and regularize it as a normal unstaged change.
+
+    Earlier versions changed the proposal itself to ``unstaged``. That made status
+    detection irregular because later scans could see an active ``bob_model``
+    change and also create a second manual change for the same path. The stable
+    flow is: keep the proposal as an immutable applied record, write the file,
+    then let ``record_manual_change`` create/update the single active disk change.
+    """
     with project_lock(project):
         data, change = _find_change(project, change_id)
         if change["status"] not in {"proposed", "conflict"}:
@@ -715,10 +772,18 @@ def apply_change(project: str, change_id: str, override: bool = False) -> dict:
             raise ValueError("File changed since this proposal was created")
         after = _read_blob(project, change, "after")
         _write_change_content(project, change, None if change["action"] == "delete" else after)
+
+        # Convert the proposal itself into the active unstaged disk change.
+        # This preserves the same change_id for staging while preventing duplicate
+        # bob_model/manual entries during later status scans.
+        change["applied_from"] = change.get("source", "bob_model")
+        change["source"] = "manual"
         change["status"] = "unstaged"
+        change["applied_at"] = _now()
         change["override_applied"] = bool(override)
-        change["updated_at"] = _now()
+        change["updated_at"] = change["applied_at"]
         _write(project, "changes.json", data)
+
         return change
 
 

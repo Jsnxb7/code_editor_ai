@@ -15,10 +15,10 @@ import {
   Sparkles,
   XCircle,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { getSocket } from "../socket";
 import { useIde } from "../context/IdeContext";
+import { getSocket } from "../socket";
 
 const MODES = [
   { id: "chat", label: "Chat", icon: MessageSquare },
@@ -193,7 +193,7 @@ export default function BobPanel() {
     setSidebarView,
     setSidebarCollapsed,
     setDiffChange,
-    loadWorktree,
+    refreshWorktreeFromJson,
   } = useIde();
   const [messages, setMessages] = useState([{
     id: nextId(),
@@ -209,11 +209,12 @@ export default function BobPanel() {
   const [savingConfig, setSavingConfig] = useState(false);
   const [health, setHealth] = useState(null);
   const listRef = useRef(null);
+  const messagesRef = useRef(messages);
 
-  const openSourceControl = () => {
+  const openSourceControl = useCallback(() => {
     setSidebarView("sourceControl");
     setSidebarCollapsed(false);
-  };
+  }, [setSidebarCollapsed, setSidebarView]);
 
   const loadConfig = async () => {
     try {
@@ -229,23 +230,52 @@ export default function BobPanel() {
   }, []);
 
   useEffect(() => {
-    const socket = getSocket();
-    const onRun = (event) => {
-      if (event.project !== currentProject) return;
-      setMessages((current) => {
-        const found = current.some((item) => item.run_id === event.run_id);
-        if (!found) return [...current, { id: nextId(), role: "assistant", kind: "run", ...event }];
-        return current.map((item) => item.run_id === event.run_id ? { ...item, ...event, kind: "run" } : item);
-      });
-      if (event.status === "completed") loadWorktree(currentProject).catch(() => {});
-    };
-    socket.on("model:run", onRun);
-    return () => socket.off("model:run", onRun);
-  }, [currentProject, loadWorktree]);
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+    messagesRef.current = messages;
+  }, [messages, sending]);
 
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, sending]);
+    if (!currentProject) return undefined;
+    const socket = getSocket();
+
+    const updateRun = (run) => {
+      if (run?.project && run.project !== currentProject) return;
+      const runId = run?.run_id;
+      if (!runId) return;
+      setMessages((current) =>
+        current.map((item) =>
+          item.run_id === runId
+            ? { ...item, kind: "run", status: run.status || item.status, run: run.run || run }
+            : item
+        )
+      );
+      if (["completed", "failed"].includes(run.status)) {
+        refreshWorktreeFromJson?.({ forceTree: true });
+        if (run.status === "completed") openSourceControl();
+      }
+    };
+
+    const recoverRuns = async () => {
+      const activeRuns = messagesRef.current.filter(
+        (item) => item.run_id && !["completed", "failed"].includes(item.status)
+      );
+      for (const item of activeRuns) {
+        try {
+          updateRun(await api.modelRunStatus(currentProject, item.run_id));
+        } catch {
+          // A reconnect should not replace the user's chat with transport noise.
+        }
+      }
+    };
+
+    socket.on("model:run", updateRun);
+    socket.on("connect", recoverRuns);
+    if (socket.connected) recoverRuns();
+    return () => {
+      socket.off("model:run", updateRun);
+      socket.off("connect", recoverRuns);
+    };
+  }, [currentProject, openSourceControl, refreshWorktreeFromJson]);
 
   const openProposal = async (changeId) => {
     if (!changeId) {

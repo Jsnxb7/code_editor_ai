@@ -69,7 +69,7 @@ export function extToLang(path = "") {
 
 let toastSeq = 0;
 let terminalSeq = 0;
-const realtimeClientId = crypto.randomUUID();
+const editorClientId = globalThis.crypto?.randomUUID?.() || `editor-${Date.now()}`;
 
 const STATUS_DECORATIONS = {
   conflicts: { label: "C", className: "status-conflict", title: "Conflict" },
@@ -119,7 +119,8 @@ export function IdeProvider({ children }) {
   const [dialog, setDialog] = useState(null); // { kind, message, defaultValue, resolve }
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
-  const editorVersionRef = useRef(0);
+  const worktreeRevisionRef = useRef(null);
+  const scmPollBusyRef = useRef(false);
 
   const pushToast = useCallback((message, variant = "info") => {
     const id = ++toastSeq;
@@ -181,6 +182,7 @@ export function IdeProvider({ children }) {
       return null;
     }
     const status = await api.worktreeStatus(project);
+    worktreeRevisionRef.current = status.revision || worktreeRevisionRef.current;
     setWorktreeStatus(status);
     return status;
   }, []);
@@ -216,64 +218,85 @@ export function IdeProvider({ children }) {
     [sourceControlIndex]
   );
 
+  const refreshWorktreeFromJson = useCallback(
+    async ({ forceTree = false, scanDisk = false } = {}) => {
+      if (!currentProject || scmPollBusyRef.current) return null;
+      scmPollBusyRef.current = true;
+      try {
+        const status = scanDisk
+          ? await api.worktreeScan(currentProject)
+          : await api.worktreeStatus(currentProject);
+        const changed = forceTree || status.revision !== worktreeRevisionRef.current;
+        worktreeRevisionRef.current = status.revision;
+        setWorktreeStatus(status);
+        if (changed || forceTree) {
+          await loadTree(currentProject);
+        }
+        return status;
+      } finally {
+        scmPollBusyRef.current = false;
+      }
+    },
+    [currentProject, loadTree]
+  );
+
   useEffect(() => {
     if (!currentProject) return undefined;
+    let cancelled = false;
+    let refreshTimer = null;
+    let scanDisk = false;
     const socket = getSocket();
-    let refreshTimer;
 
-    const join = () => socket.emit("workspace:join", { project: currentProject });
-    const onWorkspaceChanged = ({ project, paths = [] }) => {
-      if (project !== currentProject) return;
+    const scheduleRefresh = (options = {}) => {
+      if (cancelled) return;
+      scanDisk = scanDisk || Boolean(options.scanDisk);
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
-        loadTree(currentProject);
-        loadWorktree(currentProject).catch(() => {});
-      }, 40);
-      setTabs((currentTabs) => {
-        for (const tab of currentTabs) {
-          if (!tab.dirty && paths.includes(tab.path)) {
-            api.readFile(currentProject, tab.path).then((data) => {
-              setTabs((latest) =>
-                latest.map((item) =>
-                  item.path === tab.path && !item.dirty
-                    ? { ...item, content: data.content, savedContent: data.content }
-                    : item
-                )
-              );
-            }).catch(() => {});
-          }
-        }
-        return currentTabs;
-      });
+        const shouldScan = scanDisk;
+        scanDisk = false;
+        if (!cancelled) refreshWorktreeFromJson({ scanDisk: shouldScan }).catch(() => {});
+      }, 300);
     };
-    const onWorktreeChanged = ({ project }) => {
-      if (project === currentProject) loadWorktree(project).catch(() => {});
+
+    const join = () => {
+      socket.emit("workspace:join", { project: currentProject });
+      refreshWorktreeFromJson({ forceTree: true, scanDisk: true }).catch(() => {});
     };
-    const onEditorChange = ({ project, path, content, clientId }) => {
-      if (project !== currentProject || clientId === realtimeClientId) return;
-      setTabs((currentTabs) =>
-        currentTabs.map((tab) =>
-          tab.path === path
-            ? { ...tab, content, dirty: content !== tab.savedContent }
+    const onWorkspaceChanged = (event) => {
+      if (event?.project === currentProject) scheduleRefresh({ scanDisk: true });
+    };
+    const onWorktreeChanged = (event) => {
+      if (event?.project === currentProject) scheduleRefresh();
+    };
+    const onEditorChanged = (event) => {
+      if (event?.project !== currentProject || event?.clientId === editorClientId) return;
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.path === event.path
+            ? { ...tab, content: String(event.content ?? ""), dirty: String(event.content ?? "") !== tab.savedContent }
             : tab
         )
       );
     };
-
-    join();
+    const onFocus = () => scheduleRefresh({ scanDisk: true });
     socket.on("connect", join);
     socket.on("workspace:changed", onWorkspaceChanged);
     socket.on("worktree:changed", onWorktreeChanged);
-    socket.on("editor:change", onEditorChange);
+    socket.on("editor:change", onEditorChanged);
+    window.addEventListener("focus", onFocus);
+    if (socket.connected) join();
+
     return () => {
+      cancelled = true;
       clearTimeout(refreshTimer);
       socket.emit("workspace:leave", { project: currentProject });
       socket.off("connect", join);
       socket.off("workspace:changed", onWorkspaceChanged);
       socket.off("worktree:changed", onWorktreeChanged);
-      socket.off("editor:change", onEditorChange);
+      socket.off("editor:change", onEditorChanged);
+      window.removeEventListener("focus", onFocus);
     };
-  }, [currentProject, loadTree, loadWorktree]);
+  }, [currentProject, refreshWorktreeFromJson]);
 
   const selectProject = useCallback(
     async (project) => {
@@ -392,8 +415,8 @@ export function IdeProvider({ children }) {
         project: currentProject,
         path,
         content,
-        clientId: realtimeClientId,
-        version: ++editorVersionRef.current,
+        clientId: editorClientId,
+        version: Date.now(),
       });
     }
   }, [currentProject]);
@@ -623,6 +646,7 @@ export function IdeProvider({ children }) {
       loadWorkspaces,
       loadTree,
       loadWorktree,
+      refreshWorktreeFromJson,
       selectProject,
       createWorkspace,
       openWorkspaceFolder,
@@ -678,6 +702,7 @@ export function IdeProvider({ children }) {
       loadWorkspaces,
       loadTree,
       loadWorktree,
+      refreshWorktreeFromJson,
       selectProject,
       createWorkspace,
       openWorkspaceFolder,

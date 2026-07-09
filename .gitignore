@@ -8,9 +8,15 @@ venv/
 # Frontend
 frontend/node_modules/
 frontend/dist/
+node_modules/
+data/node-config.json
 
 # OS / editor
 .DS_Store
 .vscode/
-docs/
+docs/*
+!docs/COLAB_MCP_HANDOFF.md
+!docs/CONTINUATION_HANDOFF.md
+!docs/GIT_COLAB_INTEGRATION_PLAN.md
+!docs/NODE_MCP_REACT_MIGRATION.md
 *.zip
