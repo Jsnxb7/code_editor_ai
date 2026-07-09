@@ -1769,3 +1769,373 @@ body.resizing-y { cursor: row-resize; }
 .bob-input:focus { outline-color: var(--vscode-accent); }
 .bob-send-btn { background: rgba(0,122,204,.25); color: #fff; border-radius: 2px; }
 .bob-send-btn:hover:not(:disabled) { background: var(--vscode-accent); color: #fff; }
+
+/* Staged Bob plan/proposal workflow additions */
+.bob-context-card,
+.bob-plans-panel {
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.015);
+}
+.bob-context-title,
+.bob-plan-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: 6px;
+}
+.bob-plan-toolbar { justify-content: space-between; }
+.bob-plan-toolbar button,
+.bob-context-actions button,
+.bob-plan-actions button {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.bob-context-actions {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-bottom: 7px;
+}
+.bob-context-chip-group > span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.bob-context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+.bob-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  border: 1px solid rgba(245,166,35,.25);
+  background: rgba(245,166,35,.08);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 11px;
+}
+.bob-plan-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 255px;
+  overflow: auto;
+}
+.bob-plan-card {
+  border: 1px solid var(--border);
+  background: #161922;
+  border-radius: 8px;
+  padding: 8px;
+}
+.bob-plan-card.selected {
+  border-color: rgba(245,166,35,.6);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.bob-plan-card-head,
+.bob-run-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: space-between;
+}
+.bob-plan-card-head span {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.bob-plan-card p {
+  margin: 6px 0;
+  color: var(--text);
+  line-height: 1.35;
+}
+.bob-plan-meta,
+.bob-plan-files {
+  color: var(--text-muted);
+  font-size: 11px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.bob-plan-files {
+  display: block;
+  margin-top: 5px;
+  font-family: var(--mono);
+}
+.bob-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+.bob-plan-actions .danger,
+.scm-row-actions .danger {
+  color: #ff8a8a;
+}
+.editor-with-banner {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.proposal-preview-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(245,166,35,.25);
+  background: rgba(245,166,35,.08);
+  color: var(--text);
+  font-size: 12px;
+}
+.proposal-preview-banner span {
+  color: var(--text-muted);
+  flex: 1;
+}
+.proposal-preview-banner button {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.editor-with-banner .monaco-editor,
+.editor-with-banner > section {
+  min-height: 0;
+}
+
+/* Bob tabbed assistant refinement */
+.bob-panel-tabbed {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.bob-main-tabs {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  padding: 0 8px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.bob-main-tabs button {
+  min-width: 0;
+  height: 32px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.bob-main-tabs button:hover {
+  background: rgba(255,255,255,.045);
+  color: var(--text);
+}
+
+.bob-main-tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--vscode-accent);
+  background: rgba(0,122,204,.14);
+}
+
+.bob-tab-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.bob-tab-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.bob-tab-scroll,
+.bob-connection-body-tabbed {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.bob-section-heading {
+  flex: 0 0 auto;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+
+.bob-section-heading span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bob-inline-help,
+.bob-context-note {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  margin: 0 0 4px;
+}
+
+.bob-inline-help code {
+  color: #f5d08a;
+  font-family: var(--mono);
+}
+
+.bob-sticky-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: 8px;
+  background: #1f1f1f;
+  border-top: 1px solid var(--border);
+}
+
+.bob-stage-strip {
+  flex: 0 0 auto;
+  padding: 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+
+.bob-stage-strip button {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bob-selected-plan-pill {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  background: #181818;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.bob-selected-plan-pill span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+.bob-selected-plan-pill button,
+.bob-full-width {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 3px;
+  padding: 4px 7px;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.bob-full-width {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.bob-chat-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.bob-input-row {
+  flex: 0 0 auto;
+}
+
+.bob-context-card.bob-tab-card,
+.bob-plans-panel.bob-tab-card,
+.bob-connection-card.bob-tab-card {
+  padding: 0;
+}
+
+.bob-context-card.bob-tab-card .bob-context-actions,
+.bob-context-card.bob-tab-card .bob-context-chip-group,
+.bob-context-card.bob-tab-card .bob-context-note,
+.bob-context-card.bob-tab-card .bob-full-width {
+  margin-left: 8px;
+  margin-right: 8px;
+}
+
+.bob-context-chip.error {
+  border-color: rgba(244, 71, 71, .5);
+  background: rgba(244, 71, 71, .12);
+}
+
+.bob-chip-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 190px;
+}
+
+.bob-context-chip small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.bob-plan-scroll.bob-tab-scroll {
+  max-height: none;
+  padding: 8px;
+}
+
+@media (max-width: 900px) {
+  .bob-main-tabs,
+  .bob-stage-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

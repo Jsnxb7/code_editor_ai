@@ -1,29 +1,43 @@
 import {
   Bot,
+  Check,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  FileDiff,
+  Code2,
+  FilePlus2,
+  FileText,
+  FolderOpen,
+  Layers,
   Link2,
   ListChecks,
   MessageSquare,
   Play,
   PlugZap,
+  RefreshCw,
   Save,
   Send,
   Settings2,
   Sparkles,
+  X,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { useIde } from "../context/IdeContext";
 import { getSocket } from "../socket";
 
-const MODES = [
+const STAGE_MODES = [
   { id: "chat", label: "Chat", icon: MessageSquare },
   { id: "plan", label: "Plan", icon: ListChecks },
-  { id: "agent", label: "Run", icon: Play },
+  { id: "code", label: "Code", icon: Code2 },
+  { id: "review", label: "Review", icon: CheckCircle2 },
+  { id: "agent", label: "Run All", icon: Play },
+];
+
+const PANEL_TABS = [
+  { id: "chat", label: "Chat", icon: MessageSquare },
+  { id: "plans", label: "Plans", icon: ListChecks },
+  { id: "context", label: "Context", icon: Layers },
+  { id: "config", label: "Config", icon: Settings2 },
 ];
 
 let msgSeq = 0;
@@ -35,6 +49,9 @@ const emptyConfig = {
   capabilities_path: "/capabilities",
   chat_path: "/chat",
   plan_path: "/plan",
+  replan_path: "/replan",
+  code_path: "/code",
+  review_path: "/review",
   run_path: "/run-agent",
   stream_path: "/run-agent/stream",
   run_status_path: "/runs/{run_id}",
@@ -50,23 +67,66 @@ const emptyConfig = {
   token_set: false,
 };
 
-function PlanDetails({ plan }) {
-  if (!plan) return null;
+function normalizePath(path) {
+  return String(path || "").replace(/\\\\/g, "/").trim().replace(/^\/+/, "");
+}
+
+function formatBytes(value = 0) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function FileChips({ files, onRemove }) {
+  const entries = Object.entries(files || {});
   return (
-    <div className="bob-structured">
-      <strong>{plan.summary || "Plan"}</strong>
-      {!!plan.reasoning_steps?.length && (
-        <ol>{plan.reasoning_steps.map((step, index) => <li key={index}>{step}</li>)}</ol>
-      )}
-      {!!plan.files_needed?.length && <div className="bob-file-line">Files: {plan.files_needed.join(", ")}</div>}
-      {typeof plan.confidence === "number" && <small>Confidence {Math.round(plan.confidence * 100)}%</small>}
+    <div className="bob-context-chip-group">
+      <span>Forced files sent as text</span>
+      <div className="bob-context-chips">
+        {entries.map(([path, meta]) => (
+          <button key={path} className={`bob-context-chip ${meta.error ? "error" : ""}`} onClick={() => onRemove(path)} title={meta.error || "Remove from forced context"}>
+            <FileText size={12} />
+            <span className="bob-chip-path">{path}</span>
+            <small>{meta.error ? "denied" : formatBytes(meta.content?.length || 0)}</small>
+            <X size={11} />
+          </button>
+        ))}
+        {!entries.length && <small>No forced files. Add active file, open tabs, or a picked path.</small>}
+      </div>
+    </div>
+  );
+}
+
+function PlanCard({ record, selected, onSelect, onReplan, onCode, onDiscard, onAddRequested }) {
+  const plan = record?.plan || {};
+  const files = [...new Set([...(plan.files_needed || []), ...(plan.required_context || []), ...(plan.files_to_modify || []), ...(plan.files_to_create || [])])];
+  return (
+    <div className={`bob-plan-card ${selected ? "selected" : ""}`}>
+      <div className="bob-plan-card-head">
+        <strong>{record.plan_id}</strong>
+        <span>{record.status}</span>
+      </div>
+      <p>{plan.summary || "Plan ready"}</p>
+      <div className="bob-plan-meta">
+        <span>{plan.task_type || "task"}</span>
+        <span>{Math.round(Number(plan.confidence || 0) * 100)}% confidence</span>
+        <span>{files.length} file{files.length === 1 ? "" : "s"}</span>
+      </div>
+      {!!files.length && <div className="bob-plan-files">{files.slice(0, 10).join(", ")}{files.length > 10 ? "..." : ""}</div>}
+      <div className="bob-plan-actions">
+        <button onClick={() => onSelect(record.plan_id)}><Check size={12} /> Select</button>
+        <button onClick={() => onAddRequested(files)}><FilePlus2 size={12} /> Add requested</button>
+        <button onClick={() => onReplan(record.plan_id)}><RefreshCw size={12} /> Replan</button>
+        <button onClick={() => onCode(record.plan_id)}><Code2 size={12} /> Code</button>
+        <button className="danger" onClick={() => onDiscard(record.plan_id)}><X size={12} /> Discard</button>
+      </div>
     </div>
   );
 }
 
 function RunDetails({ message, onOpenProposal, onOpenSourceControl }) {
-  const run = message.run;
-  const finalStatus = run?.final_status;
+  const run = message.run || {};
+  const finalStatus = run.final_status;
   return (
     <div className="bob-structured">
       <div className="bob-run-heading">
@@ -76,185 +136,75 @@ function RunDetails({ message, onOpenProposal, onOpenSourceControl }) {
         {finalStatus === "FAIL" && <XCircle size={15} className="status-fail" />}
       </div>
       <small>{message.run_id}</small>
-      <PlanDetails plan={run?.plan || message.plan} />
-      {run?.review && (
+      {run.plan?.summary && <p>{run.plan.summary}</p>}
+      {run.review && (
         <div className={`bob-review review-${finalStatus?.toLowerCase()}`}>
           <strong>Review: {finalStatus}</strong>
           <p>{run.review.replace(/^(PASS|FAIL)\s*/i, "")}</p>
         </div>
       )}
-      {!!run?.linked_files?.length && (
+      {!!run.linked_files?.length && (
         <>
           <div className="bob-proposal-list">
             {run.linked_files.map((path, index) => (
               <button key={`${path}-${index}`} onClick={() => onOpenProposal(run.linked_changes?.[index])}>
-                <FileDiff size={13} /> {path}
+                <Sparkles size={13} /> {path}
               </button>
             ))}
           </div>
-          <button className="bob-open-scm" onClick={onOpenSourceControl}>
-            <Sparkles size={13} /> Open proposed changes in Source Control
-          </button>
+          <button className="bob-open-scm" onClick={onOpenSourceControl}>Open proposed changes in Source Control</button>
         </>
       )}
-      {run?.error && <div className="bob-run-error">{run.error}</div>}
+      {run.error && <div className="bob-run-error">{run.error}</div>}
     </div>
   );
 }
 
 function ConnectionSettings({ config, setConfig, onSave, onHealth, saving, health, tokenInput, setTokenInput, clearToken, setClearToken }) {
-  const [open, setOpen] = useState(true);
-  const statusLabel = health
-    ? health.ok ? "Connected" : "Health failed"
-    : config.configured ? "Configured" : "Not configured";
-
+  const statusLabel = health ? (health.ok ? "Connected" : "Health failed") : config.configured ? "Configured" : "Not configured";
   return (
-    <section className="bob-connection-card">
-      <button className="bob-connection-title" onClick={() => setOpen((value) => !value)}>
-        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <Settings2 size={14} /> Colab runtime
+    <section className="bob-connection-card bob-tab-card">
+      <div className="bob-section-heading">
+        <span><Settings2 size={14} /> Colab runtime</span>
         <span className={health?.ok ? "connection-ok" : config.configured ? "connection-warn" : "connection-off"}>{statusLabel}</span>
-      </button>
-      {open && (
-        <div className="bob-connection-body">
-          <label>
-            Colab / ngrok base URL
-            <input
-              value={config.base_url || ""}
-              placeholder="https://your-ngrok-url"
-              onChange={(event) => setConfig((value) => ({ ...value, base_url: event.target.value }))}
-            />
-          </label>
-          <div className="bob-connection-grid">
-            <label>
-              Health path
-              <input
-                value={config.health_path || "/health"}
-                onChange={(event) => setConfig((value) => ({ ...value, health_path: event.target.value }))}
-              />
-            </label>
-            <label>
-              Capabilities path
-              <input
-                value={config.capabilities_path || "/capabilities"}
-                onChange={(event) => setConfig((value) => ({ ...value, capabilities_path: event.target.value }))}
-              />
-            </label>
-          </div>
-          <div className="bob-connection-grid">
-            <label>
-              Chat path
-              <input value={config.chat_path || "/chat"} onChange={(event) => setConfig((value) => ({ ...value, chat_path: event.target.value }))} />
-            </label>
-            <label>
-              Plan path
-              <input value={config.plan_path || "/plan"} onChange={(event) => setConfig((value) => ({ ...value, plan_path: event.target.value }))} />
-            </label>
-          </div>
-          <div className="bob-connection-grid">
-            <label>
-              Run path
-              <input value={config.run_path || "/run-agent"} onChange={(event) => setConfig((value) => ({ ...value, run_path: event.target.value }))} />
-            </label>
-            <label>
-              Stream path
-              <input value={config.stream_path || "/run-agent/stream"} onChange={(event) => setConfig((value) => ({ ...value, stream_path: event.target.value }))} />
-            </label>
-          </div>
-          <div className="bob-connection-grid">
-            <label>
-              Timeout seconds
-              <input
-                type="number"
-                min="5"
-                max="3600"
-                value={config.timeout || 600}
-                onChange={(event) => setConfig((value) => ({ ...value, timeout: event.target.value }))}
-              />
-            </label>
-            <label>
-              Maximum iterations
-              <input
-                type="number"
-                min="1"
-                max="20"
-                value={config.max_iterations || 5}
-                onChange={(event) => setConfig((value) => ({ ...value, max_iterations: event.target.value }))}
-              />
-            </label>
-          </div>
-          <div className="bob-connection-grid">
-            <label>
-              Context
-              <select value={config.context_mode || "workspace"} onChange={(event) => setConfig((value) => ({ ...value, context_mode: event.target.value }))}>
-                <option value="active">Active file</option>
-                <option value="open">Open files</option>
-                <option value="workspace">Workspace</option>
-              </select>
-            </label>
-            <label>
-              Context byte budget
-              <input
-                type="number"
-                min="10000"
-                max="1000000"
-                step="10000"
-                value={config.context_budget || 160000}
-                onChange={(event) => setConfig((value) => ({ ...value, context_budget: event.target.value }))}
-              />
-            </label>
-          </div>
-          <div className="bob-connection-grid">
-            <label>
-              Optional bearer token
-              <input
-                type="password"
-                value={tokenInput}
-                placeholder={config.token_set ? "Token saved — enter to replace" : "optional-secret"}
-                onChange={(event) => setTokenInput(event.target.value)}
-              />
-            </label>
-            <label>
-              Extra headers JSON
-              <input
-                value={config.headers_json || "{}"}
-                spellCheck="false"
-                onChange={(event) => setConfig((value) => ({ ...value, headers_json: event.target.value }))}
-              />
-            </label>
-          </div>
-          <label className="bob-checkbox-row">
-            <input type="checkbox" checked={clearToken} onChange={(event) => setClearToken(event.target.checked)} />
-            Clear saved bearer token on save
-          </label>
-          <label className="bob-checkbox-row">
-            <input type="checkbox" checked={config.prefer_streaming !== false} onChange={(event) => setConfig((value) => ({ ...value, prefer_streaming: event.target.checked }))} />
-            Prefer realtime run events
-          </label>
-          <label className="bob-checkbox-row">
-            <input type="checkbox" checked={config.keep_model_loaded !== false} onChange={(event) => setConfig((value) => ({ ...value, keep_model_loaded: event.target.checked }))} />
-            Keep model loaded between requests
-          </label>
-          <div className="bob-connection-actions">
-            <button onClick={onSave} disabled={saving}>
-              <Save size={13} /> Save
-            </button>
-            <button onClick={onHealth} disabled={!config.base_url || saving}>
-              <PlugZap size={13} /> Test /health
-            </button>
-            <button onClick={() => navigator.clipboard?.writeText(config.base_url || "")} disabled={!config.base_url}>
-              <Link2 size={13} /> Copy URL
-            </button>
-          </div>
-          {health && (
-            <div className={`bob-health-box ${health.ok ? "ok" : "fail"}`}>
-              {health.ok
-                ? `${health.model || "Colab runtime"} · ${health.contract_version || "legacy contract"}${health.streaming ? " · streaming" : ""}`
-                : health.message || "Health check failed."}
-            </div>
-          )}
+      </div>
+      <div className="bob-connection-body bob-connection-body-tabbed">
+        <label>Colab / ngrok base URL<input value={config.base_url || ""} placeholder="https://your-ngrok-url.ngrok-free.app" onChange={(e) => setConfig((v) => ({ ...v, base_url: e.target.value }))} /></label>
+        <small className="bob-inline-help">Paste the ngrok HTTPS base URL only. Do not add <code>:8000</code>.</small>
+        <div className="bob-connection-grid">
+          <label>Health path<input value={config.health_path || "/health"} onChange={(e) => setConfig((v) => ({ ...v, health_path: e.target.value }))} /></label>
+          <label>Capabilities path<input value={config.capabilities_path || "/capabilities"} onChange={(e) => setConfig((v) => ({ ...v, capabilities_path: e.target.value }))} /></label>
         </div>
-      )}
+        <div className="bob-connection-grid">
+          <label>Plan path<input value={config.plan_path || "/plan"} onChange={(e) => setConfig((v) => ({ ...v, plan_path: e.target.value }))} /></label>
+          <label>Replan path<input value={config.replan_path || "/replan"} onChange={(e) => setConfig((v) => ({ ...v, replan_path: e.target.value }))} /></label>
+        </div>
+        <div className="bob-connection-grid">
+          <label>Code path<input value={config.code_path || "/code"} onChange={(e) => setConfig((v) => ({ ...v, code_path: e.target.value }))} /></label>
+          <label>Review path<input value={config.review_path || "/review"} onChange={(e) => setConfig((v) => ({ ...v, review_path: e.target.value }))} /></label>
+        </div>
+        <div className="bob-connection-grid">
+          <label>Run path<input value={config.run_path || "/run-agent"} onChange={(e) => setConfig((v) => ({ ...v, run_path: e.target.value }))} /></label>
+          <label>Stream path<input value={config.stream_path || "/run-agent/stream"} onChange={(e) => setConfig((v) => ({ ...v, stream_path: e.target.value }))} /></label>
+        </div>
+        <div className="bob-connection-grid">
+          <label>Timeout<input type="number" min="5" max="3600" value={config.timeout || 600} onChange={(e) => setConfig((v) => ({ ...v, timeout: e.target.value }))} /></label>
+          <label>Context bytes<input type="number" min="10000" max="1000000" step="10000" value={config.context_budget || 160000} onChange={(e) => setConfig((v) => ({ ...v, context_budget: e.target.value }))} /></label>
+        </div>
+        <div className="bob-connection-grid">
+          <label>Bearer token<input type="password" value={tokenInput} placeholder={config.token_set ? "Token saved — enter to replace" : "optional-secret"} onChange={(e) => setTokenInput(e.target.value)} /></label>
+          <label>Extra headers JSON<input value={config.headers_json || "{}"} spellCheck="false" onChange={(e) => setConfig((v) => ({ ...v, headers_json: e.target.value }))} /></label>
+        </div>
+        <label className="bob-checkbox-row"><input type="checkbox" checked={clearToken} onChange={(e) => setClearToken(e.target.checked)} /> Clear saved bearer token on save</label>
+        <label className="bob-checkbox-row"><input type="checkbox" checked={config.prefer_streaming !== false} onChange={(e) => setConfig((v) => ({ ...v, prefer_streaming: e.target.checked }))} /> Prefer streaming for Run All</label>
+        <label className="bob-checkbox-row"><input type="checkbox" checked={config.keep_model_loaded !== false} onChange={(e) => setConfig((v) => ({ ...v, keep_model_loaded: e.target.checked }))} /> Keep Colab model loaded</label>
+        {health && <div className={`bob-health-box ${health.ok ? "ok" : "fail"}`}>{health.ok ? `${health.model || "Colab runtime"} · ${health.contract_version || "contract"}` : health.message || "Health check failed."}</div>}
+      </div>
+      <div className="bob-connection-actions bob-sticky-actions">
+        <button onClick={onSave} disabled={saving}><Save size={13} /> Save config</button>
+        <button onClick={onHealth} disabled={!config.base_url || saving}><PlugZap size={13} /> Test</button>
+        <button onClick={() => navigator.clipboard?.writeText(config.base_url || "")} disabled={!config.base_url}><Link2 size={13} /> Copy URL</button>
+      </div>
     </section>
   );
 }
@@ -263,141 +213,123 @@ export default function BobPanel() {
   const {
     activePath,
     currentProject,
+    tabs,
     pushToast,
     setSidebarView,
     setSidebarCollapsed,
     setDiffChange,
     refreshWorktreeFromJson,
+    promptDialog,
   } = useIde();
-  const [messages, setMessages] = useState([{
-    id: nextId(),
-    role: "assistant",
-    text: "Choose Chat, Plan, or Run. Bob routes through MCP, and generated edits appear as Source Control proposals before they touch your files.",
-  }]);
+
+  const [messages, setMessages] = useState([{ id: nextId(), role: "assistant", text: "Use Plan first, select a plan, then send that plan to Coder and Reviewer. Forced context files are sent as text to avoid Colab/path access issues." }]);
   const [draft, setDraft] = useState("");
-  const [mode, setMode] = useState("chat");
+  const [mode, setMode] = useState("plan");
+  const [activeTab, setActiveTab] = useState("chat");
   const [sending, setSending] = useState(false);
   const [config, setConfig] = useState(emptyConfig);
   const [tokenInput, setTokenInput] = useState("");
   const [clearToken, setClearToken] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [health, setHealth] = useState(null);
+  const [forcedFileTexts, setForcedFileTexts] = useState({});
+  const [plans, setPlans] = useState([]);
+  const [selectedPlanId, setSelectedPlanId] = useState(null);
+  const [latestCode, setLatestCode] = useState(null);
   const listRef = useRef(null);
-  const messagesRef = useRef(messages);
+
+  const openPaths = useMemo(() => tabs.map((tab) => tab.path).filter(Boolean), [tabs]);
+  const forcedPaths = useMemo(() => Object.keys(forcedFileTexts), [forcedFileTexts]);
+  const forcedFilesPayload = useMemo(() => Object.fromEntries(Object.entries(forcedFileTexts).filter(([, meta]) => !meta.error).map(([path, meta]) => [path, meta.content || ""])), [forcedFileTexts]);
+  const selectedPlan = useMemo(() => plans.find((item) => item.plan_id === selectedPlanId), [plans, selectedPlanId]);
 
   const openSourceControl = useCallback(() => {
     setSidebarView("sourceControl");
     setSidebarCollapsed(false);
   }, [setSidebarCollapsed, setSidebarView]);
 
-  const loadConfig = async () => {
+  const loadConfig = useCallback(async () => {
+    try { setConfig({ ...emptyConfig, ...(await api.modelGetConfig()) }); }
+    catch (error) { pushToast(error.message, "error"); }
+  }, [pushToast]);
+
+  const loadPlans = useCallback(async () => {
+    if (!currentProject) return;
     try {
-      setConfig({ ...emptyConfig, ...(await api.modelGetConfig()) });
-    } catch (error) {
-      pushToast(error.message, "error");
+      const data = await api.plansList(currentProject, true);
+      setPlans(data.plans || []);
+      setSelectedPlanId((current) => current || data.selected_plan_id || data.plans?.[0]?.plan_id || null);
+    } catch {
+      // Older workspaces simply have no plans yet.
     }
-  };
+  }, [currentProject]);
 
-  useEffect(() => {
-    loadConfig();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-    messagesRef.current = messages;
-  }, [messages, sending]);
+  useEffect(() => { loadConfig(); }, [loadConfig]);
+  useEffect(() => { loadPlans(); }, [loadPlans]);
+  useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" }); }, [messages, sending, activeTab]);
 
   useEffect(() => {
     if (!currentProject) return undefined;
     const socket = getSocket();
-
+    const refresh = () => loadPlans();
     const updateRun = (run) => {
       if (run?.project && run.project !== currentProject) return;
-      const runId = run?.run_id;
+      const runId = run?.run_id || run?.run?.run_id;
       if (!runId) return;
-      setMessages((current) =>
-        current.map((item) =>
-          item.run_id === runId
-            ? { ...item, kind: "run", status: run.status || item.status, run: run.run || run }
-            : item
-        )
-      );
-      if (["completed", "failed"].includes(run.status)) {
+      setMessages((current) => current.map((item) => item.run_id === runId ? { ...item, kind: "run", status: run.status || item.status, run: run.run || run } : item));
+      if (["completed", "failed", "coded"].includes(run.status)) {
+        loadPlans();
         refreshWorktreeFromJson?.({ forceTree: true });
         if (run.status === "completed") openSourceControl();
       }
     };
-
-    const recoverRuns = async () => {
-      const activeRuns = messagesRef.current.filter(
-        (item) => item.run_id && !["completed", "failed"].includes(item.status)
-      );
-      for (const item of activeRuns) {
-        try {
-          updateRun(await api.modelRunStatus(currentProject, item.run_id));
-        } catch {
-          // A reconnect should not replace the user's chat with transport noise.
-        }
-      }
-    };
-
+    socket.on("plans:changed", refresh);
     socket.on("model:run", updateRun);
-    socket.on("connect", recoverRuns);
-    if (socket.connected) recoverRuns();
-    return () => {
-      socket.off("model:run", updateRun);
-      socket.off("connect", recoverRuns);
-    };
-  }, [currentProject, openSourceControl, refreshWorktreeFromJson]);
+    return () => { socket.off("plans:changed", refresh); socket.off("model:run", updateRun); };
+  }, [currentProject, loadPlans, openSourceControl, refreshWorktreeFromJson]);
 
-  const openProposal = async (changeId) => {
-    if (!changeId) {
-      openSourceControl();
-      return;
+  const addForced = useCallback(async (paths) => {
+    if (!currentProject) return;
+    const cleanPaths = [...new Set((paths || []).map(normalizePath).filter(Boolean))];
+    if (!cleanPaths.length) return;
+    const updates = {};
+    for (const path of cleanPaths) {
+      try {
+        const result = await api.readFile(currentProject, path);
+        updates[path] = { content: result.content || "", size: (result.content || "").length, addedAt: Date.now() };
+      } catch (error) {
+        // Keep the chip visible and send nothing for this file; user can see exactly what failed.
+        updates[path] = { content: "", error: error.message || "Access denied", addedAt: Date.now() };
+      }
     }
-    try {
-      setDiffChange(await api.worktreeDiff(currentProject, changeId));
-      openSourceControl();
-    } catch (error) {
-      pushToast(error.message, "error");
-    }
+    setForcedFileTexts((current) => ({ ...current, ...updates }));
+    const failed = Object.values(updates).filter((item) => item.error).length;
+    pushToast(failed ? `${cleanPaths.length - failed} file(s) added, ${failed} failed.` : `${cleanPaths.length} file(s) added to Bob context as text.`, failed ? "error" : "success");
+  }, [currentProject, pushToast]);
+
+  const removeForced = useCallback((path) => setForcedFileTexts((current) => {
+    const next = { ...current };
+    delete next[path];
+    return next;
+  }), []);
+
+  const addPickedFile = async () => {
+    const path = await promptDialog("Add file path to Bob context", activePath || "");
+    if (path) await addForced([path]);
   };
 
   const saveConfig = async () => {
-    setSavingConfig(true);
-    setHealth(null);
+    setSavingConfig(true); setHealth(null);
     try {
-      const payload = {
-        base_url: config.base_url || "",
-        health_path: config.health_path || "/health",
-        capabilities_path: config.capabilities_path || "/capabilities",
-        chat_path: config.chat_path || "/chat",
-        plan_path: config.plan_path || "/plan",
-        run_path: config.run_path || "/run-agent",
-        stream_path: config.stream_path || "/run-agent/stream",
-        run_status_path: config.run_status_path || "/runs/{run_id}",
-        cancel_path: config.cancel_path || "/runs/{run_id}/cancel",
-        timeout: config.timeout || 600,
-        max_iterations: config.max_iterations || 5,
-        context_mode: config.context_mode || "workspace",
-        context_budget: config.context_budget || 160000,
-        prefer_streaming: config.prefer_streaming !== false,
-        keep_model_loaded: config.keep_model_loaded !== false,
-        headers_json: config.headers_json || "{}",
-      };
+      const payload = { ...config };
       if (tokenInput) payload.token = tokenInput;
       if (clearToken) payload.token = "";
       const saved = await api.modelSetConfig(payload);
       setConfig({ ...emptyConfig, ...saved });
-      setTokenInput("");
-      setClearToken(false);
-      pushToast("Saved Bob model connection");
-    } catch (error) {
-      pushToast(error.message, "error");
-    } finally {
-      setSavingConfig(false);
-    }
+      setTokenInput(""); setClearToken(false);
+      pushToast("Saved Bob model connection", "success");
+    } catch (error) { pushToast(error.message, "error"); }
+    finally { setSavingConfig(false); }
   };
 
   const testHealth = async () => {
@@ -406,106 +338,177 @@ export default function BobPanel() {
       const result = await api.modelHealth();
       const capabilities = result.ok ? await api.modelCapabilities() : {};
       const response = result.response || {};
-      setHealth({
-        ...result,
-        ...capabilities,
-        model: response.model || capabilities.model,
-        contract_version: response.contract_version || capabilities.contract_version,
-      });
+      setHealth({ ...result, ...capabilities, model: response.model || capabilities.model, contract_version: response.contract_version || capabilities.contract_version });
       pushToast(result.ok ? "Colab health check passed" : "Colab health check failed", result.ok ? "success" : "error");
-    } catch (error) {
-      setHealth({ ok: false, message: error.message });
-      pushToast(error.message, "error");
-    } finally {
-      setSavingConfig(false);
-    }
+    } catch (error) { setHealth({ ok: false, message: error.message }); pushToast(error.message, "error"); }
+    finally { setSavingConfig(false); }
+  };
+
+  const selectPlan = async (planId) => {
+    const plan = await api.plansSelect(currentProject, planId);
+    setSelectedPlanId(planId);
+    await loadPlans();
+    setActiveTab("chat");
+    setMessages((current) => [...current, { id: nextId(), role: "assistant", text: `Selected ${planId}: ${plan.plan?.summary || "Plan selected"}` }]);
+  };
+
+  const runPlan = async (promptOverride) => {
+    const prompt = (promptOverride || draft).trim();
+    if (!prompt) return;
+    setSending(true);
+    setDraft("");
+    setActiveTab("chat");
+    setMessages((current) => [...current, { id: nextId(), role: "user", text: prompt, mode: "plan" }]);
+    try {
+      const result = await api.modelPlan(currentProject, prompt, activePath, forcedPaths, openPaths, config.context_budget, forcedFilesPayload);
+      const record = result.plan_record;
+      setSelectedPlanId(record.plan_id);
+      await loadPlans();
+      setMessages((current) => [...current, { id: nextId(), role: "assistant", kind: "plan", text: "Plan created", plan_record: record }]);
+    } catch (error) { setMessages((current) => [...current, { id: nextId(), role: "assistant", text: `Plan failed: ${error.message}` }]); pushToast(error.message, "error"); }
+    finally { setSending(false); }
+  };
+
+  const runReplan = async (planId = selectedPlanId) => {
+    if (!planId) return pushToast("Select a plan first", "error");
+    setSending(true);
+    setActiveTab("chat");
+    try {
+      const prompt = draft.trim() || selectedPlan?.prompt || "Replan with the selected forced context files.";
+      const result = await api.modelReplan(currentProject, prompt, planId, activePath, forcedPaths, openPaths, config.context_budget, forcedFilesPayload);
+      const record = result.plan_record;
+      setSelectedPlanId(record.plan_id);
+      await loadPlans();
+      setMessages((current) => [...current, { id: nextId(), role: "assistant", kind: "plan", text: "Replan created", plan_record: record }]);
+    } catch (error) { pushToast(error.message, "error"); }
+    finally { setSending(false); }
+  };
+
+  const runCode = async (planId = selectedPlanId) => {
+    if (!planId) return pushToast("Select a plan first", "error");
+    setSending(true);
+    setActiveTab("chat");
+    try {
+      const result = await api.modelCode(currentProject, planId, activePath, forcedPaths, openPaths, config.context_budget, forcedFilesPayload);
+      setLatestCode({ planId, code: result.code, files: result.files });
+      setMessages((current) => [...current, { id: nextId(), role: "assistant", text: `Coder finished for ${planId}. ${Object.keys(result.files || {}).length} file proposal(s) ready for review.` }]);
+    } catch (error) { pushToast(error.message, "error"); }
+    finally { setSending(false); }
+  };
+
+  const runReview = async () => {
+    if (!latestCode?.planId) return pushToast("Run coder first", "error");
+    setSending(true);
+    setActiveTab("chat");
+    try {
+      const result = await api.modelReview(currentProject, latestCode.planId, latestCode.code, latestCode.files);
+      await refreshWorktreeFromJson?.({ forceTree: true });
+      openSourceControl();
+      setMessages((current) => [...current, { id: nextId(), role: "assistant", kind: "run", run_id: result.run?.run_id, status: "completed", run: result.run }]);
+    } catch (error) { pushToast(error.message, "error"); }
+    finally { setSending(false); }
+  };
+
+  const runAll = async () => {
+    const prompt = draft.trim();
+    if (!prompt) return;
+    setSending(true); setDraft("");
+    setActiveTab("chat");
+    setMessages((current) => [...current, { id: nextId(), role: "user", text: prompt, mode: "run all" }]);
+    try {
+      const run = await api.modelRunAgent(currentProject, prompt, activePath);
+      setMessages((current) => [...current, { id: nextId(), role: "assistant", kind: "run", run_id: run.run_id, status: "queued", run }]);
+      openSourceControl();
+    } catch (error) { pushToast(error.message, "error"); }
+    finally { setSending(false); }
   };
 
   const send = async () => {
     const content = draft.trim();
-    if (!content || sending || !currentProject) return;
-    setMessages((current) => [...current, { id: nextId(), role: "user", text: content, mode }]);
-    setDraft("");
-    setSending(true);
-    try {
-      if (mode === "chat") {
+    if (!content && !["code", "review"].includes(mode)) return;
+    if (mode === "chat") {
+      setSending(true);
+      setMessages((current) => [...current, { id: nextId(), role: "user", text: content, mode }]);
+      setDraft("");
+      try {
         const data = await api.bobChat(currentProject, content, activePath);
-        setMessages((current) => [...current, {
-          id: nextId(), role: "assistant", text: data.reply, plan: data.plan,
-        }]);
-      } else {
-        const run = mode === "plan"
-          ? await api.modelPlan(currentProject, content, activePath)
-          : await api.modelRunAgent(currentProject, content, activePath);
-        setMessages((current) => [...current, {
-          id: nextId(), role: "assistant", kind: "run", run_id: run.run_id, status: "queued", run,
-        }]);
-        openSourceControl();
-      }
-    } catch (error) {
-      setMessages((current) => [...current, { id: nextId(), role: "assistant", text: `Bob request failed: ${error.message}` }]);
-      pushToast("Bob request failed", "error");
-    } finally {
-      setSending(false);
-    }
+        setMessages((current) => [...current, { id: nextId(), role: "assistant", text: data.reply, plan: data.plan }]);
+      } catch (error) { pushToast(error.message, "error"); }
+      finally { setSending(false); }
+    } else if (mode === "plan") await runPlan();
+    else if (mode === "code") await runCode();
+    else if (mode === "review") await runReview();
+    else await runAll();
   };
 
-  return (
-    <aside className="bob-panel">
-      <div className="sidebar-header">BOB ASSISTANT</div>
-      <div className="bob-toolchain-note">MCP tools · Git source control · reviewable proposals · Colab runtime</div>
+  const renderPlans = () => (
+    <section className="bob-plans-panel bob-tab-card">
+      <div className="bob-plan-toolbar">
+        <strong>Plans</strong>
+        <button onClick={loadPlans}><RefreshCw size={12} /> Refresh</button>
+      </div>
+      <div className="bob-plan-scroll bob-tab-scroll">
+        {plans.map((record) => <PlanCard key={record.plan_id} record={record} selected={record.plan_id === selectedPlanId} onSelect={selectPlan} onReplan={runReplan} onCode={runCode} onDiscard={async (id) => { await api.plansDiscard(currentProject, id); await loadPlans(); }} onAddRequested={addForced} />)}
+        {!plans.length && <small>No plans yet. Describe a change and press Plan.</small>}
+      </div>
+    </section>
+  );
 
-      <ConnectionSettings
-        config={config}
-        setConfig={setConfig}
-        onSave={saveConfig}
-        onHealth={testHealth}
-        saving={savingConfig}
-        health={health}
-        tokenInput={tokenInput}
-        setTokenInput={setTokenInput}
-        clearToken={clearToken}
-        setClearToken={setClearToken}
-      />
+  const renderContext = () => (
+    <section className="bob-context-card bob-tab-card">
+      <div className="bob-section-heading"><span><Layers size={14} /> Context passed to Bob</span><small>{forcedPaths.length} forced</small></div>
+      <div className="bob-context-actions">
+        <button onClick={() => addForced([activePath])} disabled={!activePath}>+ Active file</button>
+        <button onClick={() => addForced(openPaths)} disabled={!openPaths.length}>+ Open tabs</button>
+        <button onClick={addPickedFile}><FolderOpen size={12} /> Pick file</button>
+        <button onClick={() => setForcedFileTexts({})} disabled={!forcedPaths.length}>Clear</button>
+      </div>
+      <p className="bob-context-note">Forced files are read by the app and sent to Colab as text. Colab does not need filesystem access to your local paths.</p>
+      <FileChips files={forcedFileTexts} onRemove={removeForced} />
+      {!!selectedPlan && <button className="bob-full-width" onClick={() => addForced([...(selectedPlan.plan?.files_needed || []), ...(selectedPlan.plan?.required_context || [])])}><FilePlus2 size={13} /> Add files requested by selected plan</button>}
+    </section>
+  );
 
-      <div className="bob-mode-control">
-        {MODES.map(({ id, label, icon: Icon }) => (
-          <button key={id} className={mode === id ? "active" : ""} onClick={() => setMode(id)} title={`${label} mode`}>
-            <Icon size={14} /> {label}
-          </button>
-        ))}
+  const renderChat = () => (
+    <>
+      <div className="bob-mode-control bob-stage-strip">
+        {STAGE_MODES.map(({ id, label, icon: Icon }) => <button key={id} className={mode === id ? "active" : ""} onClick={() => setMode(id)}><Icon size={14} /> {label}</button>)}
+      </div>
+      <div className="bob-selected-plan-pill">
+        <span>{selectedPlanId ? `Selected plan: ${selectedPlanId}` : "No selected plan"}</span>
+        <button onClick={() => setActiveTab("plans")}>Plans</button>
+        <button onClick={() => setActiveTab("context")}>Context ({forcedPaths.length})</button>
       </div>
       <div className="bob-chat-list" ref={listRef}>
         {messages.map((message) => (
           <div key={message.id} className={`bob-msg bob-msg-${message.role}`}>
             <div className="bob-msg-role">{message.role === "user" ? `You · ${message.mode || "chat"}` : "Bob"}</div>
-            {message.kind === "run"
-              ? <RunDetails message={message} onOpenProposal={openProposal} onOpenSourceControl={openSourceControl} />
-              : <>
-                  <div className="bob-msg-text">{message.text}</div>
-                  <PlanDetails plan={message.plan} />
-                </>}
+            {message.kind === "run" ? <RunDetails message={message} onOpenProposal={async (changeId) => { if (!changeId) return openSourceControl(); try { setDiffChange(await api.worktreeDiff(currentProject, changeId)); openSourceControl(); } catch (e) { pushToast(e.message, "error"); } }} onOpenSourceControl={openSourceControl} />
+              : message.kind === "plan" ? <PlanCard record={message.plan_record} selected={message.plan_record?.plan_id === selectedPlanId} onSelect={selectPlan} onReplan={runReplan} onCode={runCode} onDiscard={async (id) => { await api.plansDiscard(currentProject, id); await loadPlans(); }} onAddRequested={addForced} />
+              : <div className="bob-msg-text">{message.text}</div>}
           </div>
         ))}
         {sending && <div className="bob-msg bob-msg-assistant bob-msg-pending"><span className="bob-typing-dot" /><span className="bob-typing-dot" /><span className="bob-typing-dot" /></div>}
       </div>
       <div className="bob-input-row">
-        <textarea
-          className="bob-input"
-          placeholder={mode === "chat" ? "Ask Bob about this workspace..." : mode === "plan" ? "Describe what Bob should plan..." : "Describe changes for Bob to propose..."}
-          value={draft}
-          rows={3}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              send();
-            }
-          }}
-        />
-        <button className="bob-send-btn" onClick={send} disabled={sending || !draft.trim()} title="Send">
-          {mode === "agent" ? <Sparkles size={16} /> : <Send size={16} />}
-        </button>
+        <textarea className="bob-input" placeholder={mode === "plan" ? "Describe what Bob should plan..." : mode === "code" ? "Send selected plan to coder..." : mode === "review" ? "Review latest coder output..." : "Ask Bob..."} value={draft} rows={3} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
+        <button className="bob-send-btn" onClick={send} disabled={sending || (!draft.trim() && !["code", "review"].includes(mode))} title="Send"><Send size={16} /></button>
+      </div>
+    </>
+  );
+
+  return (
+    <aside className="bob-panel bob-panel-tabbed">
+      <div className="sidebar-header">BOB ASSISTANT</div>
+      <div className="bob-toolchain-note">MCP · staged plans · text context · proposal cache · Git source control</div>
+      <div className="bob-main-tabs">
+        {PANEL_TABS.map(({ id, label, icon: Icon }) => <button key={id} className={activeTab === id ? "active" : ""} onClick={() => setActiveTab(id)}><Icon size={14} /> {label}</button>)}
+      </div>
+      <div className="bob-tab-content">
+        {activeTab === "chat" && renderChat()}
+        {activeTab === "plans" && renderPlans()}
+        {activeTab === "context" && renderContext()}
+        {activeTab === "config" && <ConnectionSettings config={config} setConfig={setConfig} onSave={saveConfig} onHealth={testHealth} saving={savingConfig} health={health} tokenInput={tokenInput} setTokenInput={setTokenInput} clearToken={clearToken} setClearToken={setClearToken} />}
       </div>
     </aside>
   );

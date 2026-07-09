@@ -57,11 +57,13 @@ from bob_core.json_worktree import (
     unstage_all,
     unstage_change,
 )
-from bob_core.model_service import model_run_status, start_model_run
+from bob_core.model_service import model_run_status, start_model_run, plan_stage, replan_stage, code_stage, review_stage
 from bob_core.colab_adapter import ColabAdapter
 from bob_core.model_config import read_model_config, save_model_config
 from bob_core import git_service
 from bob_core import proposal_store
+from bob_core import plan_store
+from bob_core.context_builder import build_context as build_model_context
 from bob_core.git_migration import migrate_json_worktree
 from workspace_tools import search_workspace
 
@@ -605,6 +607,11 @@ def proposal_diff(project: str, proposal_id: str, path: str) -> dict:
     return proposal_store.get_diff(project, proposal_id, path)
 
 
+@capability("proposal.preview")
+def proposal_preview(project: str, proposal_id: str, path: str) -> dict:
+    return proposal_store.get_preview(project, proposal_id, path)
+
+
 @capability("proposal.apply")
 def proposal_apply(project: str, proposal_id: str, path: str | None = None) -> dict:
     result = proposal_store.apply_proposal(project, proposal_id, path)
@@ -989,6 +996,9 @@ def model_set_config(
     capabilities_path: str | None = None,
     chat_path: str | None = None,
     plan_path: str | None = None,
+    replan_path: str | None = None,
+    code_path: str | None = None,
+    review_path: str | None = None,
     run_path: str | None = None,
     stream_path: str | None = None,
     run_status_path: str | None = None,
@@ -1009,6 +1019,9 @@ def model_set_config(
         capabilities_path=capabilities_path,
         chat_path=chat_path,
         plan_path=plan_path,
+        replan_path=replan_path,
+        code_path=code_path,
+        review_path=review_path,
         run_path=run_path,
         stream_path=stream_path,
         run_status_path=run_status_path,
@@ -1075,9 +1088,106 @@ def model_chat(project: str, message: str, active_path: str | None = None) -> di
         return assistant_chat(message, project, active_path)
 
 
+@capability("context.build")
+def context_build(
+    project: str,
+    prompt: str = "",
+    active_path: str | None = None,
+    forced_paths: list[str] | None = None,
+    open_paths: list[str] | None = None,
+    forced_files: dict[str, str] | None = None,
+    plan_id: str | None = None,
+    max_bytes: int | None = None,
+) -> dict:
+    selected_plan = plan_store.get_plan(project, plan_id)["plan"] if plan_id else None
+    return build_model_context(
+        project=project,
+        prompt=prompt,
+        active_path=active_path,
+        forced_paths=forced_paths or [],
+        open_paths=open_paths or [],
+        forced_files=forced_files or {},
+        plan=selected_plan,
+        max_bytes=max_bytes or int(read_model_config().get("context_budget", 160000)),
+    )
+
+
+@capability("plans.list")
+def plans_list(project: str, include_inactive: bool = True, run_id: str | None = None) -> dict:
+    return plan_store.list_plans(project, include_inactive, run_id)
+
+
+@capability("plans.get")
+def plans_get(project: str, plan_id: str) -> dict:
+    return plan_store.get_plan(project, plan_id)
+
+
+@capability("plans.select")
+def plans_select(project: str, plan_id: str) -> dict:
+    result = plan_store.select_plan(project, plan_id)
+    _publish("plans:changed", {"project": project})
+    return result
+
+
+@capability("plans.discard")
+def plans_discard(project: str, plan_id: str) -> dict:
+    result = plan_store.discard_plan(project, plan_id)
+    _publish("plans:changed", {"project": project})
+    return result
+
+
 @capability("model.plan")
-def model_plan(project: str, prompt: str, active_path: str | None = None) -> dict:
-    return start_model_run(project, prompt, "plan", active_path)
+def model_plan(
+    project: str,
+    prompt: str,
+    active_path: str | None = None,
+    forced_paths: list[str] | None = None,
+    open_paths: list[str] | None = None,
+    max_bytes: int | None = None,
+    forced_files: dict[str, str] | None = None,
+) -> dict:
+    result = plan_stage(project, prompt, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, select=True)
+    _publish("plans:changed", {"project": project})
+    return result
+
+
+@capability("model.replan")
+def model_replan(
+    project: str,
+    prompt: str = "",
+    previous_plan_id: str | None = None,
+    active_path: str | None = None,
+    forced_paths: list[str] | None = None,
+    open_paths: list[str] | None = None,
+    max_bytes: int | None = None,
+    forced_files: dict[str, str] | None = None,
+) -> dict:
+    result = replan_stage(project, prompt, previous_plan_id, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, select=True)
+    _publish("plans:changed", {"project": project})
+    return result
+
+
+@capability("model.code")
+def model_code(
+    project: str,
+    plan_id: str,
+    active_path: str | None = None,
+    forced_paths: list[str] | None = None,
+    open_paths: list[str] | None = None,
+    max_bytes: int | None = None,
+    forced_files: dict[str, str] | None = None,
+) -> dict:
+    result = code_stage(project, plan_id, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {})
+    _publish("model:run", {"project": project, "run": result.get("run"), "status": "coded"})
+    return result
+
+
+@capability("model.review")
+def model_review(project: str, plan_id: str, code: str, files: dict) -> dict:
+    result = review_stage(project, plan_id, code, files)
+    _publish("proposal:changed", {"project": project})
+    _publish("source-control:changed", {"project": project})
+    return result
 
 
 @capability("model.run_agent")

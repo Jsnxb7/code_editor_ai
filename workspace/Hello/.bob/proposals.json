@@ -1,0 +1,140 @@
+{
+  "schema_version": "1.0",
+  "next_index": 6,
+  "proposals": [
+    {
+      "index": 1,
+      "proposal_id": "proposal_000001",
+      "run_id": "run_000002",
+      "status": "applied",
+      "review_status": "PASS",
+      "summary": "Create a sample Flask app to show 'Hello'",
+      "review": "PASS\nThe `app.py` and `templates/index.html` files are correctly defined and match their respective file types. The `files_needed` list is empty, which is correct as no additional files were requested. There are no hallucinations, unsafe filesystem behaviors, missing requirements, or syntax issues identified.",
+      "risk": "medium",
+      "base_git_head": "b9a09f8ead9d1bec6ff6b73cbf625f03228d854b",
+      "created_at": "2026-07-09T08:07:01.653008Z",
+      "updated_at": "2026-07-09T08:07:36.700904Z",
+      "files": [
+        {
+          "path": "app.py",
+          "action": "modify",
+          "before_hash": "0c1c39eb27d720e62fd9714913d63903c130bf4f962b50511b3884b2806e91fd",
+          "after_hash": "4195aae6650c5ff8f81e7ac0fba0074f8e138f44d061780744c5e486167ff94f",
+          "before_blob": ".bob/proposals/proposal_000001/files/568470d013cd12e4f388.before",
+          "after_blob": ".bob/proposals/proposal_000001/files/568470d013cd12e4f388.after",
+          "patch_path": ".bob/proposals/proposal_000001/patches/568470d013cd12e4f388.patch",
+          "status": "applied"
+        },
+        {
+          "path": "templates/index.html",
+          "action": "modify",
+          "before_hash": "b34bc86a38d371dbea644b06643139b035af0edefdac5459f6751c4215b86fd5",
+          "after_hash": "1a564fa32369e74b2f2ba2e89018f0ddf28635f301f8ab076164df9f026ce411",
+          "before_blob": ".bob/proposals/proposal_000001/files/37a968442c22648ceb4a.before",
+          "after_blob": ".bob/proposals/proposal_000001/files/37a968442c22648ceb4a.after",
+          "patch_path": ".bob/proposals/proposal_000001/patches/37a968442c22648ceb4a.patch",
+          "status": "applied"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "proposal_id": "proposal_000002",
+      "run_id": "run_000004",
+      "status": "discarded",
+      "review_status": "FAIL",
+      "summary": "Modify the Flask app to render the index.html template and display the message from it",
+      "review": "FAIL\nThe `app.py` file content does not match the expected behavior. The plan suggests rendering the `index.html` template, but the generated code returns a string instead of rendering the template. The code should use `render_template('index.html')` to serve the content of `index.html` at the root route.",
+      "risk": "high",
+      "base_git_head": "b9a09f8ead9d1bec6ff6b73cbf625f03228d854b",
+      "created_at": "2026-07-09T08:13:05.529510Z",
+      "updated_at": "2026-07-09T08:21:45.311689Z",
+      "files": [
+        {
+          "path": "app.py",
+          "action": "modify",
+          "before_hash": "4195aae6650c5ff8f81e7ac0fba0074f8e138f44d061780744c5e486167ff94f",
+          "after_hash": "a8f55f015f01773dbd1ebb332e8bdf3a9c2f407a18eead017f337f285e2ea398",
+          "before_blob": ".bob/proposals/proposal_000002/files/568470d013cd12e4f388.before",
+          "after_blob": ".bob/proposals/proposal_000002/files/568470d013cd12e4f388.after",
+          "patch_path": ".bob/proposals/proposal_000002/patches/568470d013cd12e4f388.patch",
+          "status": "discarded"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "proposal_id": "proposal_000003",
+      "run_id": "run_000005",
+      "status": "applied",
+      "review_status": "PASS",
+      "summary": "Modify the Flask app to render the index page with the text 'hello'",
+      "review": "PASS\nThe generated code matches the expected modifications. `app.py` correctly imports `render_template` and uses it in the `home` function to render the `index.html` template. The `index.html` file contains the appropriate HTML structure with the text \"hello\". All files needed for the task are present and correctly defined.",
+      "risk": "medium",
+      "base_git_head": "b9a09f8ead9d1bec6ff6b73cbf625f03228d854b",
+      "created_at": "2026-07-09T08:21:21.140510Z",
+      "updated_at": "2026-07-09T08:21:41.556416Z",
+      "files": [
+        {
+          "path": "app.py",
+          "action": "modify",
+          "before_hash": "4195aae6650c5ff8f81e7ac0fba0074f8e138f44d061780744c5e486167ff94f",
+          "after_hash": "a8f55f015f01773dbd1ebb332e8bdf3a9c2f407a18eead017f337f285e2ea398",
+          "before_blob": ".bob/proposals/proposal_000003/files/568470d013cd12e4f388.before",
+          "after_blob": ".bob/proposals/proposal_000003/files/568470d013cd12e4f388.after",
+          "patch_path": ".bob/proposals/proposal_000003/patches/568470d013cd12e4f388.patch",
+          "status": "applied"
+        },
+        {
+          "path": "templates/index.html",
+          "action": "modify",
+          "before_hash": "1a564fa32369e74b2f2ba2e89018f0ddf28635f301f8ab076164df9f026ce411",
+          "after_hash": "373735d5b2b5ecccbd3d4bd5e8d8efb654f35d12c1eba963a8bc55a2dca75c39",
+          "before_blob": ".bob/proposals/proposal_000003/files/37a968442c22648ceb4a.before",
+          "after_blob": ".bob/proposals/proposal_000003/files/37a968442c22648ceb4a.after",
+          "patch_path": ".bob/proposals/proposal_000003/patches/37a968442c22648ceb4a.patch",
+          "status": "applied"
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "proposal_id": "proposal_000004",
+      "run_id": "run_000006",
+      "status": "failed_review",
+      "review_status": "FAIL",
+      "summary": "Add 'Hello' text to the rendered page from Flask",
+      "review": "FAIL\nThe `app.py` file and `templates/index.html` file are present and correctly defined. However, the `templates/index.html` file contains the text '\\ud83d\\udc4b hello \\ud83c\\udf0d' instead of the expected '\\ud83d\\udc4b hello \\ud83c\\udf0d'. The text in `templates/index.html` should match the expected text '\\ud83d\\udc4b hello \\ud83c\\udf0d'.",
+      "risk": "low",
+      "base_git_head": "b9a09f8ead9d1bec6ff6b73cbf625f03228d854b",
+      "created_at": "2026-07-09T08:29:23.483288Z",
+      "updated_at": "2026-07-09T08:29:23.483288Z",
+      "files": []
+    },
+    {
+      "index": 5,
+      "proposal_id": "proposal_000005",
+      "run_id": "run_000007",
+      "status": "applied",
+      "review_status": "PASS",
+      "summary": "Change the rendered text from '👋 hello 🌍' to '👋 hello from flask 🌍'",
+      "review": "PASS\nThe generated `templates/index.html` file content matches the expected changes. The file is a full replacement and the content is correct according to the request. There are no hallucinations, unsafe filesystem behavior, missing requirements, or syntax issues identified.",
+      "risk": "low",
+      "base_git_head": "b9a09f8ead9d1bec6ff6b73cbf625f03228d854b",
+      "created_at": "2026-07-09T08:32:36.067804Z",
+      "updated_at": "2026-07-09T08:32:44.533752Z",
+      "files": [
+        {
+          "path": "templates/index.html",
+          "action": "modify",
+          "before_hash": "373735d5b2b5ecccbd3d4bd5e8d8efb654f35d12c1eba963a8bc55a2dca75c39",
+          "after_hash": "a3251330e259c07075bc443a4d906cc8c75644831249c134b6b4385966d2bb02",
+          "before_blob": ".bob/proposals/proposal_000005/files/37a968442c22648ceb4a.before",
+          "after_blob": ".bob/proposals/proposal_000005/files/37a968442c22648ceb4a.after",
+          "patch_path": ".bob/proposals/proposal_000005/patches/37a968442c22648ceb4a.patch",
+          "status": "applied"
+        }
+      ]
+    }
+  ]
+}

@@ -23,6 +23,9 @@ DEFAULT_MODEL_CONFIG: dict[str, Any] = {
     "capabilities_path": "/capabilities",
     "chat_path": "/chat",
     "plan_path": "/plan",
+    "review_path": "/review",
+    "code_path": "/code",
+    "replan_path": "/replan",
     "run_path": "/run-agent",
     "stream_path": "/run-agent/stream",
     "run_status_path": "/runs/{run_id}",
@@ -80,6 +83,12 @@ def _env_config() -> dict[str, Any]:
         env["base_url"] = os.getenv("BOB_COLAB_BASE_URL", "").rstrip("/")
     if os.getenv("BOB_COLAB_PLAN_PATH") is not None:
         env["plan_path"] = _clean_path(os.getenv("BOB_COLAB_PLAN_PATH"), "/plan")
+    if os.getenv("BOB_COLAB_REPLAN_PATH") is not None:
+        env["replan_path"] = _clean_path(os.getenv("BOB_COLAB_REPLAN_PATH"), "/replan")
+    if os.getenv("BOB_COLAB_CODE_PATH") is not None:
+        env["code_path"] = _clean_path(os.getenv("BOB_COLAB_CODE_PATH"), "/code")
+    if os.getenv("BOB_COLAB_REVIEW_PATH") is not None:
+        env["review_path"] = _clean_path(os.getenv("BOB_COLAB_REVIEW_PATH"), "/review")
     if os.getenv("BOB_COLAB_RUN_PATH") is not None:
         env["run_path"] = _clean_path(os.getenv("BOB_COLAB_RUN_PATH"), "/run-agent")
     if os.getenv("BOB_COLAB_TIMEOUT") is not None:
@@ -110,6 +119,9 @@ def read_model_config(include_secret: bool = False) -> dict[str, Any]:
         ("capabilities_path", "/capabilities"),
         ("chat_path", "/chat"),
         ("plan_path", "/plan"),
+        ("replan_path", "/replan"),
+        ("code_path", "/code"),
+        ("review_path", "/review"),
         ("run_path", "/run-agent"),
         ("stream_path", "/run-agent/stream"),
         ("run_status_path", "/runs/{run_id}"),
@@ -136,6 +148,9 @@ def save_model_config(
     capabilities_path: str | None = None,
     chat_path: str | None = None,
     plan_path: str | None = None,
+    replan_path: str | None = None,
+    code_path: str | None = None,
+    review_path: str | None = None,
     run_path: str | None = None,
     stream_path: str | None = None,
     run_status_path: str | None = None,
@@ -160,6 +175,9 @@ def save_model_config(
         ("capabilities_path", capabilities_path, "/capabilities"),
         ("chat_path", chat_path, "/chat"),
         ("plan_path", plan_path, "/plan"),
+        ("replan_path", replan_path, "/replan"),
+        ("code_path", code_path, "/code"),
+        ("review_path", review_path, "/review"),
         ("run_path", run_path, "/run-agent"),
         ("stream_path", stream_path, "/run-agent/stream"),
         ("run_status_path", run_status_path, "/runs/{run_id}"),

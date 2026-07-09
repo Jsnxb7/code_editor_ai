@@ -82,6 +82,9 @@ class ColabAdapter:
         self.capabilities_path = config.get("capabilities_path", "/capabilities")
         self.chat_path = config.get("chat_path", "/chat")
         self.plan_path = config.get("plan_path", "/plan")
+        self.replan_path = config.get("replan_path", "/replan")
+        self.code_path = config.get("code_path", "/code")
+        self.review_path = config.get("review_path", "/review")
         self.run_path = config.get("run_path", "/run-agent")
         self.stream_path = config.get("stream_path", "/run-agent/stream")
         self.timeout = int(config.get("timeout", 600))
@@ -160,6 +163,33 @@ class ColabAdapter:
             })
         body = self._post(self.plan_path, payload)
         return normalize_plan(body.get("plan", body))
+
+    def replan(self, payload: dict) -> dict:
+        if not self.configured:
+            return self.plan(payload)
+        body = self._post(self.replan_path, payload)
+        return {**body, "plan": normalize_plan(body.get("plan", body))}
+
+    def code(self, payload: dict) -> dict:
+        if not self.configured:
+            raise RuntimeError("Colab model endpoint is not configured")
+        body = self._post(self.code_path, payload)
+        plan = normalize_plan(body.get("plan") or payload.get("selected_plan") or payload.get("plan"))
+        code = str(body.get("code") or "")
+        files = body.get("files")
+        if not isinstance(files, dict):
+            files = parse_coder_output(code, plan.get("files_needed"))
+        return {**body, "plan": plan, "code": code, "files": files}
+
+    def review(self, payload: dict) -> dict:
+        if not self.configured:
+            raise RuntimeError("Colab model endpoint is not configured")
+        body = self._post(self.review_path, payload)
+        review = str(body.get("review") or "")
+        final_status = str(body.get("final_status") or "").upper()
+        if final_status not in {"PASS", "FAIL"}:
+            final_status = "PASS" if review.lstrip().upper().startswith("PASS") else "FAIL"
+        return {**body, "review": review, "final_status": final_status}
 
     def run_agent(self, payload: dict) -> dict:
         if not self.configured:

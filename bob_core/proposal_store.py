@@ -182,6 +182,29 @@ def get_diff(project: str, proposal_id: str, path: str) -> dict:
     }
 
 
+def get_preview(project: str, proposal_id: str, path: str) -> dict:
+    """Return virtual proposed file content without touching the workspace."""
+    _, proposal = _find(project, proposal_id)
+    record = _file(proposal, path)
+    before = safe_path(project, record["before_blob"]).read_text(encoding="utf-8")
+    after = safe_path(project, record["after_blob"]).read_text(encoding="utf-8")
+    return {
+        **record,
+        "project": project,
+        "proposal_id": proposal_id,
+        "run_id": proposal.get("run_id"),
+        "source": "bob_model",
+        "virtual_uri": f"bob-proposal://{proposal_id}/{path}",
+        "path": path,
+        "content": after,
+        "before_content": before,
+        "review_status": proposal.get("review_status"),
+        "risk": proposal.get("risk"),
+        "summary": proposal.get("summary"),
+        "status": "conflict" if record.get("status") == "conflict" else "proposed",
+    }
+
+
 def apply_proposal(project: str, proposal_id: str, path: str | None = None, override: bool = False) -> dict:
     with project_lock(project):
         data, proposal = _find(project, proposal_id)

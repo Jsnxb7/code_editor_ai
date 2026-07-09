@@ -63,7 +63,8 @@ async function ensureDirectoryHandle(rootHandle, folderPath) {
 }
 
 export function extToLang(path = "") {
-  const ext = path.split(".").pop().toLowerCase();
+  const clean = String(path || "").replace(/^bob-proposal:\/\/[^/]+\//, "");
+  const ext = clean.split(".").pop().toLowerCase();
   return EXT_TO_LANG[ext] || "plaintext";
 }
 
@@ -97,7 +98,7 @@ export function IdeProvider({ children }) {
   const [tree, setTree] = useState(null);
   const [treeLoading, setTreeLoading] = useState(false);
 
-  // tabs: ordered array of { path, content, savedContent, dirty }
+  // tabs: ordered array of { path, content, savedContent, dirty, proposal?, proposalId?, realPath?, readOnly? }
   const [tabs, setTabs] = useState([]);
   const [activePath, setActivePath] = useState(null);
 
@@ -415,7 +416,7 @@ export function IdeProvider({ children }) {
 
   const updateTabContent = useCallback((path, content) => {
     setTabs((prev) =>
-      prev.map((t) => (t.path === path ? { ...t, content, dirty: content !== t.savedContent } : t))
+      prev.map((t) => (t.path === path ? (t.readOnly ? t : { ...t, content, dirty: content !== t.savedContent }) : t))
     );
     if (currentProject) {
       getSocket().emit("editor:change", {
@@ -432,6 +433,10 @@ export function IdeProvider({ children }) {
     async (path) => {
       const tab = tabs.find((t) => t.path === path);
       if (!tab) return;
+      if (tab.proposal) {
+        pushToast("Proposal previews are read-only. Use Apply to write the proposal to disk.", "error");
+        return;
+      }
       await api.saveFile(currentProject, path, tab.content);
       await loadWorktree(currentProject);
       setTabs((prev) =>
@@ -448,7 +453,7 @@ export function IdeProvider({ children }) {
   }, [activePath, saveTab]);
 
   const saveAllTabs = useCallback(async () => {
-    const dirtyTabs = tabs.filter((t) => t.dirty);
+    const dirtyTabs = tabs.filter((t) => t.dirty && !t.proposal);
     for (const tab of dirtyTabs) {
       await api.saveFile(currentProject, tab.path, tab.content);
     }
@@ -530,6 +535,36 @@ export function IdeProvider({ children }) {
       pushToast(`Renamed to ${newPath}`);
     },
     [currentProject, activePath, loadTree, loadWorktree, pushToast]
+  );
+
+  const openProposalPreview = useCallback(
+    async (proposalId, path) => {
+      const data = await api.proposalPreview(currentProject, proposalId, path);
+      const virtualPath = data.virtual_uri || `bob-proposal://${proposalId}/${path}`;
+      setTabs((prev) => {
+        const existing = prev.find((tab) => tab.path === virtualPath);
+        if (existing) {
+          return prev.map((tab) => tab.path === virtualPath ? { ...tab, content: data.content, savedContent: data.content, dirty: false } : tab);
+        }
+        return [...prev, {
+          path: virtualPath,
+          realPath: path,
+          proposalId,
+          proposal: true,
+          readOnly: true,
+          content: data.content,
+          savedContent: data.content,
+          dirty: false,
+          reviewStatus: data.review_status,
+          risk: data.risk,
+          summary: data.summary,
+        }];
+      });
+      setActivePath(virtualPath);
+      setDiffChange(null);
+      return data;
+    },
+    [currentProject]
   );
 
   const refreshTree = useCallback(() => loadTree(currentProject), [loadTree, currentProject]);
@@ -658,6 +693,7 @@ export function IdeProvider({ children }) {
       createWorkspace,
       openWorkspaceFolder,
       openFile,
+      openProposalPreview,
       closeTab,
       setActivePath,
       updateTabContent,
@@ -714,6 +750,7 @@ export function IdeProvider({ children }) {
       createWorkspace,
       openWorkspaceFolder,
       openFile,
+      openProposalPreview,
       closeTab,
       updateTabContent,
       saveTab,

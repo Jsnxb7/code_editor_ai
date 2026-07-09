@@ -1,0 +1,23 @@
+{
+  "base_url": "https://nontyrannous-congratulatorily-maribel.ngrok-free.dev",
+  "health_path": "/health",
+  "capabilities_path": "/capabilities",
+  "chat_path": "/chat",
+  "plan_path": "/plan",
+  "review_path": "/review",
+  "code_path": "/code",
+  "replan_path": "/replan",
+  "run_path": "/run-agent",
+  "stream_path": "/run-agent/stream",
+  "run_status_path": "/runs/{run_id}",
+  "cancel_path": "/runs/{run_id}/cancel",
+  "timeout": 600,
+  "max_iterations": 5,
+  "context_mode": "workspace",
+  "context_budget": 160000,
+  "prefer_streaming": true,
+  "keep_model_loaded": true,
+  "token": "",
+  "headers_json": "{}",
+  "updated_at": "2026-07-09T08:04:47.413153Z"
+}

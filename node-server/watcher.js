@@ -3,7 +3,7 @@ import path from "node:path";
 import chokidar from "chokidar";
 
 const IGNORED_DIRS = new Set(["node_modules", "__pycache__", ".venv", "venv", ".pytest_cache", "dist", "build"]);
-const BOB_STATE_FILES = new Set(["proposals.json", "runs.json", "model_runs.json"]);
+const BOB_STATE_FILES = new Set(["plans.json", "proposals.json", "runs.json", "model_runs.json"]);
 const GIT_STATE_FILES = new Set(["HEAD", "index", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"]);
 
 function shouldIgnore(filePath, workspaceRoot) {
@@ -52,13 +52,14 @@ export class WorkspaceWatcher {
     if (!project || rest.length === 0) return;
     const relPath = rest.join("/");
     const current = this.pending.get(project) || {
-      paths: new Set(), bob: false, git: false, proposal: false, runs: false, timer: null,
+      paths: new Set(), bob: false, git: false, proposal: false, plans: false, runs: false, timer: null,
     };
     if (relPath.startsWith(".git/")) {
       current.git = true;
     } else if (relPath.startsWith(".bob/")) {
       current.bob = true;
       if (relPath === ".bob/runs.json") current.runs = true;
+      if (relPath === ".bob/plans.json") current.plans = true;
       if (relPath === ".bob/proposals.json") current.proposal = true;
     } else {
       current.paths.add(relPath);
@@ -76,6 +77,7 @@ export class WorkspaceWatcher {
     const paths = [...state.paths].sort();
     if (paths.length) this.io.to(room).emit("workspace:changed", { project, paths });
     if (state.git || paths.length) this.io.to(room).emit("git:changed", { project });
+    if (state.plans) this.io.to(room).emit("plans:changed", { project });
     if (state.proposal) this.io.to(room).emit("proposal:changed", { project });
     if (state.git || state.bob || paths.length) {
       this.io.to(room).emit("source-control:changed", { project });

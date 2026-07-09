@@ -52,6 +52,14 @@ export const api = {
   search: (project, query) => invoke("code.search", { project, query }),
   bobChat: (project, message, activePath) =>
     invoke("model.chat", { project, message, active_path: activePath }),
+  contextBuild: (project, prompt, activePath, forcedPaths = [], openPaths = [], planId = null, maxBytes = null, forcedFiles = {}) =>
+    invoke("context.build", { project, prompt, active_path: activePath, forced_paths: forcedPaths, open_paths: openPaths, plan_id: planId, max_bytes: maxBytes, forced_files: forcedFiles }),
+  plansList: (project, includeInactive = true, runId = null) =>
+    invoke("plans.list", { project, include_inactive: includeInactive, run_id: runId }),
+  plansGet: (project, planId) => invoke("plans.get", { project, plan_id: planId }),
+  plansSelect: (project, planId) => invoke("plans.select", { project, plan_id: planId }),
+  plansDiscard: (project, planId) => invoke("plans.discard", { project, plan_id: planId }),
+
   worktreeStatus: (project) => invoke("worktree.status", { project }),
   worktreeScan: (project) => invoke("worktree.scan", { project }),
   worktreeIndexedChanges: (project) => invoke("worktree.indexed_changes", { project }),
@@ -135,6 +143,8 @@ export const api = {
     invoke("proposal.list", { project, include_inactive: includeInactive }),
   proposalDiff: (project, proposalId, path) =>
     invoke("proposal.diff", { project, proposal_id: proposalId, path }),
+  proposalPreview: (project, proposalId, path) =>
+    invoke("proposal.preview", { project, proposal_id: proposalId, path }),
   proposalApply: (project, proposalId, path) =>
     invoke("proposal.apply", { project, proposal_id: proposalId, path }),
   proposalOverrideApply: (project, proposalId, path) =>
@@ -148,8 +158,14 @@ export const api = {
   modelSetConfig: (config) => invoke("model.set_config", config),
   modelHealth: () => invoke("model.health"),
   modelCapabilities: () => invoke("model.capabilities"),
-  modelPlan: (project, prompt, activePath) =>
-    invoke("model.plan", { project, prompt, active_path: activePath }),
+  modelPlan: (project, prompt, activePath, forcedPaths = [], openPaths = [], maxBytes = null, forcedFiles = {}) =>
+    invoke("model.plan", { project, prompt, active_path: activePath, forced_paths: forcedPaths, open_paths: openPaths, max_bytes: maxBytes, forced_files: forcedFiles }),
+  modelReplan: (project, prompt, previousPlanId, activePath, forcedPaths = [], openPaths = [], maxBytes = null, forcedFiles = {}) =>
+    invoke("model.replan", { project, prompt, previous_plan_id: previousPlanId, active_path: activePath, forced_paths: forcedPaths, open_paths: openPaths, max_bytes: maxBytes, forced_files: forcedFiles }),
+  modelCode: (project, planId, activePath, forcedPaths = [], openPaths = [], maxBytes = null, forcedFiles = {}) =>
+    invoke("model.code", { project, plan_id: planId, active_path: activePath, forced_paths: forcedPaths, open_paths: openPaths, max_bytes: maxBytes, forced_files: forcedFiles }),
+  modelReview: (project, planId, code, files) =>
+    invoke("model.review", { project, plan_id: planId, code, files }),
   modelRunAgent: (project, prompt, activePath) =>
     invoke("model.run_agent", { project, prompt, active_path: activePath }),
   modelRunStatus: (project, runId) =>
