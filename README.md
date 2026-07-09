@@ -1,95 +1,1032 @@
 # Bob IDE
 
-Bob IDE is a local VS Code-style environment built with React, Monaco, a Node
-application gateway, and a Python MCP service. Python remains the authority
-for workspace operations, JSON source control, validation, Bob model runs, and
-the Colab handoff.
+Bob IDE is a local VS Code-style coding environment with a React + Monaco editor, a Node gateway, a Python MCP tool service, Git-style source control, and a Colab-powered Bob coding assistant.
 
-## Architecture
+The app is split into four parts:
 
 ```text
-React + Monaco (:5173 in development)
-  -> Node Express + Socket.IO (:3000)
-  -> MCP Streamable HTTP
-  -> Python FastMCP (:8001/mcp)
-  -> capabilities.py
-  -> bob_core and Colab
+React + Monaco frontend
+  -> Node Express + Socket.IO gateway
+  -> Python MCP service
+  -> Bob Core tools + Colab model server
 ```
 
-Node serves the production frontend and owns filesystem watching, realtime
-events, terminal PTYs, and the Pyright LSP bridge. Every frontend command uses
-`POST /api/mcp/call`; Node discovers and invokes Python tools through the
-official MCP SDK.
+Use the React app for the IDE, Node for the app server and realtime layer, Python MCP for workspace/file/model tools, and Colab for the large model runtime.
 
-## Install
+---
+
+## Main features
+
+- VS Code-like layout with Explorer, editor tabs, Bob chat, Source Control, terminal, search, and status bar.
+- Monaco editor and Monaco diff viewer.
+- Node gateway for frontend API, Socket.IO realtime events, terminal, and production React serving.
+- Python MCP service for workspace operations, file operations, validation, Git/source-control tools, Bob model calls, proposals, and context building.
+- Bob chat staged workflow:
+  - Plan
+  - Replan
+  - Code selected plan
+  - Review
+  - Run all
+- Forced context files for Bob:
+  - active file
+  - open tabs
+  - manually picked files
+- Bob proposals are stored locally first and are not written to real project files until accepted.
+- Source Control shows proposed Bob changes separately from real Git/project changes.
+- Colab model server with ngrok exposure.
+- Standalone Colab showcase mode for running the model without the IDE.
+
+---
+
+## Folder layout
+
+```text
+bob-ide/
+  bob_core/              Python business logic and tools
+  capabilities.py        Python MCP capability registry
+  mcp_server.py          Python FastMCP server
+  node-server/           Node Express + Socket.IO gateway
+  frontend/              React + Monaco frontend
+  scripts/               Helper scripts and verification scripts
+  docs/                  Detailed architecture docs
+  workspace/             Local workspaces/projects
+  data/                  Node config and local runtime data
+  legacy/                Old Flask backend archive
+  README.md              This file
+```
+
+---
+
+## Ports used
+
+```text
+Python MCP service: 127.0.0.1:8001
+Node gateway:       127.0.0.1:3000
+React dev server:   127.0.0.1:5173
+Colab HTTP server:  8000 inside Colab, exposed by ngrok
+```
+
+In development, open:
+
+```text
+http://127.0.0.1:5173
+```
+
+In production, open:
+
+```text
+http://127.0.0.1:3000
+```
+
+---
+
+# Part 1: Install required software
+
+## 1. Install Python
+
+Install Python 3.10 or newer.
+
+Check Python:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-npm.cmd install
-npm.cmd --prefix frontend install
+python --version
 ```
 
-## Development
-
-Start all three services:
+If that does not work, try:
 
 ```powershell
-npm.cmd run dev
+py --version
 ```
 
-Open `http://127.0.0.1:5173`.
+## 2. Install Node.js
 
-They can also be started separately:
+Install Node.js LTS from the official Node.js website.
+
+Check Node and npm:
 
 ```powershell
-npm.cmd run dev:python
-npm.cmd run dev:node
-npm.cmd run dev:frontend
+node --version
+npm --version
 ```
 
-## Production
+## 3. Install Git
+
+Install Git for Windows.
+
+Check Git:
 
 ```powershell
-npm.cmd run build
-npm.cmd run dev:python
-npm.cmd start
+git --version
 ```
 
-Open `http://127.0.0.1:3000`. Node serves `frontend/dist` and returns an
-actionable error when the frontend has not been built.
+## 4. Install Visual Studio Build Tools if needed
 
-## Verification
+The root Node server uses `node-pty` for the integrated terminal. On Windows, `node-pty` may need build tools.
+
+If `npm install` fails while installing `node-pty`, install:
+
+```text
+Visual Studio Build Tools
+Desktop development with C++
+Windows SDK
+```
+
+Then reopen PowerShell and run `npm install` again.
+
+---
+
+# Part 2: Extract the project
+
+Extract the project zip somewhere simple, for example:
+
+```text
+C:\Users\shour\Documents\GitHub\code_editor_ai
+```
+
+Open PowerShell in the extracted project folder.
+
+Example:
 
 ```powershell
-npm.cmd test
+cd C:\Users\shour\Documents\GitHub\code_editor_ai
 ```
 
-The suite runs Python tests, Node tests, the React-to-MCP contract check,
-frontend lint, and the production build.
+---
 
-Health and tool discovery:
+# Part 3: Create and activate Python virtual environment
+
+Create the virtual environment:
+
+```powershell
+python -m venv .venv
+```
+
+Activate it:
+
+```powershell
+.\.venv\Scripts\activate
+```
+
+Your terminal should now show `(.venv)`.
+
+Install Python dependencies:
+
+```powershell
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+The minimum required dependency is the MCP SDK:
+
+```text
+mcp[cli]
+```
+
+If extra Python packages are added later, they should also go into `requirements.txt`.
+
+---
+
+# Part 4: Install Node dependencies
+
+From the project root, install Node gateway dependencies:
+
+```powershell
+npm install
+```
+
+Install frontend dependencies:
+
+```powershell
+npm --prefix frontend install
+```
+
+If PowerShell blocks npm scripts, run:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Then close and reopen PowerShell.
+
+Alternative without changing the policy:
+
+```powershell
+cmd /c npm install
+cmd /c npm --prefix frontend install
+```
+
+---
+
+# Part 5: Run the app in development mode
+
+The development app uses three services:
+
+```text
+Python MCP service
+Node gateway
+React dev server
+```
+
+## Option A: Start everything with one command
+
+From the project root:
+
+```powershell
+npm run dev
+```
+
+Then open:
+
+```text
+http://127.0.0.1:5173
+```
+
+## Option B: Start each service manually
+
+Open three PowerShell terminals in the project root.
+
+### Terminal 1: Python MCP service
+
+```powershell
+.\.venv\Scripts\activate
+npm run dev:python
+```
+
+This starts Python MCP on:
+
+```text
+http://127.0.0.1:8001/mcp
+```
+
+### Terminal 2: Node gateway
+
+```powershell
+npm run dev:node
+```
+
+This starts Node on:
+
+```text
+http://127.0.0.1:3000
+```
+
+### Terminal 3: React frontend
+
+```powershell
+npm run dev:frontend
+```
+
+This starts React on:
+
+```text
+http://127.0.0.1:5173
+```
+
+Open the browser at:
+
+```text
+http://127.0.0.1:5173
+```
+
+---
+
+# Part 6: Run the app in production mode
+
+Build the React frontend:
+
+```powershell
+npm run build
+```
+
+Start Python MCP:
+
+```powershell
+npm run dev:python
+```
+
+In a second terminal, start Node production server:
+
+```powershell
+npm start
+```
+
+Open:
+
+```text
+http://127.0.0.1:3000
+```
+
+In production mode, Node serves the built React files from `frontend/dist`.
+
+---
+
+# Part 7: Verify local services
+
+Check Node health:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:3000/api/health
+```
+
+Check MCP tools through Node:
+
+```powershell
 Invoke-RestMethod http://127.0.0.1:3000/api/mcp/tools
 ```
 
-## Runtime Configuration
+Run tests:
 
-Node configuration is stored in `data/node-config.json`. Environment
-variables override stored values:
+```powershell
+npm test
+```
 
-- `BOB_HOST`
-- `BOB_PORT`
-- `BOB_MCP_URL`
-- `BOB_WORKSPACE_ROOT`
-- `BOB_FRONTEND_DIST`
+This runs:
 
-Colab and model configuration remains in Python and is managed through
-`model.get_config`, `model.set_config`, and `model.health`.
+```text
+Python tests
+Node tests
+API contract tests
+Frontend lint
+Frontend production build
+```
 
-## Security
+---
 
-The integrated terminal is a real local shell and is not sandboxed. All
-services bind to localhost by default. Do not expose them to an untrusted
-network.
+# Part 8: Open the Colab notebook
+
+Use this Colab notebook:
+
+```text
+https://colab.research.google.com/drive/1ThAKq_mPo4fkZN1fSr1SkzL4nyh8_Nnr?usp=sharing
+```
+
+Open the notebook in Google Colab.
+
+Set runtime to GPU:
+
+```text
+Runtime -> Change runtime type -> GPU
+```
+
+Then run the setup cells from the top.
+
+---
+
+# Part 9: Add Hugging Face token in Colab
+
+Some models may need a Hugging Face token. Even if the selected model is public, setting the token avoids many download/auth problems.
+
+## 1. Get Hugging Face token
+
+Go to your Hugging Face account settings and create an access token.
+
+## 2. Set token in Colab
+
+In the notebook, find the token/setup cell and set:
+
+```python
+HF_TOKEN = "paste_your_huggingface_token_here"
+```
+
+Then login:
+
+```python
+from huggingface_hub import login
+login(token=HF_TOKEN)
+```
+
+If the notebook already has a helper cell for Hugging Face login, paste the token there and run that cell.
+
+Do not commit real tokens into Git.
+
+---
+
+# Part 10: Add ngrok token in Colab
+
+ngrok exposes the Colab server to your local Bob IDE.
+
+## 1. Get ngrok token
+
+Create an ngrok account and copy your auth token from the ngrok dashboard.
+
+## 2. Set token in Colab
+
+In the notebook, set:
+
+```python
+NGROK_AUTHTOKEN = "paste_your_ngrok_token_here"
+```
+
+Then run:
+
+```python
+from pyngrok import ngrok
+ngrok.set_auth_token(NGROK_AUTHTOKEN)
+```
+
+If `pyngrok` is missing, run:
+
+```python
+!pip install -q pyngrok
+```
+
+---
+
+# Part 11: Start the Colab HTTP server
+
+After the model/setup cells are ready, start the Colab HTTP server:
+
+```python
+server_info = start_colab_http_server(
+    port=8000,
+    use_ngrok=True
+)
+
+server_info
+```
+
+Expected output:
+
+```python
+{
+  "port": 8000,
+  "public_url": "https://xxxx-xxxx-xxxx.ngrok-free.app"
+}
+```
+
+If `public_url` is `None`, restart ngrok:
+
+```python
+from pyngrok import ngrok
+ngrok.kill()
+ngrok.set_auth_token(NGROK_AUTHTOKEN)
+public_tunnel = ngrok.connect(8000, "http")
+print(public_tunnel.public_url)
+```
+
+Use the printed URL as the Base URL in Bob Chat.
+
+Important:
+
+```text
+Do not add :8000 to the ngrok URL.
+```
+
+Correct:
+
+```text
+https://xxxx-xxxx-xxxx.ngrok-free.app
+```
+
+Wrong:
+
+```text
+https://xxxx-xxxx-xxxx.ngrok-free.app:8000
+```
+
+---
+
+# Part 12: Test the Colab server
+
+In Colab:
+
+```python
+import requests
+
+base_url = server_info["public_url"]
+print(requests.get(base_url + "/health").json())
+print(requests.get(base_url + "/capabilities").json())
+```
+
+Expected health response:
+
+```json
+{
+  "ok": true,
+  "service": "bob-colab"
+}
+```
+
+Available Colab routes:
+
+```text
+GET  /health
+GET  /capabilities
+POST /plan
+POST /replan
+POST /code
+POST /review
+POST /run-agent
+POST /run-agent/stream
+```
+
+---
+
+# Part 13: Connect Bob Chat to Colab
+
+Open the Bob IDE in your browser.
+
+Go to the Bob panel.
+
+Open the Config tab.
+
+Fill these fields:
+
+```text
+Base URL:          https://xxxx-xxxx-xxxx.ngrok-free.app
+Health path:       /health
+Capabilities path: /capabilities
+Plan path:         /plan
+Replan path:       /replan
+Code path:         /code
+Review path:       /review
+Run path:          /run-agent
+Stream path:       /run-agent/stream
+Bearer token:      leave empty unless you set BOB_COLAB_TOKEN
+```
+
+Click:
+
+```text
+Save Config
+```
+
+Then click:
+
+```text
+Test Health
+```
+
+If the test succeeds, Bob IDE can reach Colab.
+
+---
+
+# Part 14: Optional bearer token between Bob IDE and Colab
+
+If you want Colab to require a token, set this in the notebook before starting the server:
+
+```python
+BOB_COLAB_TOKEN = "my-secret-token"
+```
+
+Then in Bob Chat Config, set:
+
+```text
+Bearer token: my-secret-token
+```
+
+If you leave `BOB_COLAB_TOKEN` empty, leave Bearer token empty in the app.
+
+---
+
+# Part 15: Bob staged workflow
+
+Bob uses a staged workflow so model changes are reviewable before they touch real files.
+
+## Step 1: Add context files
+
+Open the Bob panel.
+
+Go to the Context tab.
+
+Use:
+
+```text
+Add active file
+Add open tabs
+Pick file
+Clear
+```
+
+Forced context files are sent as text content, not just file paths.
+
+## Step 2: Ask for a plan
+
+Go to the Chat tab.
+
+Type a request, for example:
+
+```text
+Add a login page and connect it to the existing routes.
+```
+
+Click:
+
+```text
+Plan
+```
+
+Bob sends the prompt, workspace tree, active file, and forced context to Colab.
+
+The plan is saved in:
+
+```text
+workspace/<project>/.bob/plans.json
+workspace/<project>/.bob/model_runs.json
+```
+
+## Step 3: Select a plan
+
+Go to the Plans tab.
+
+You will see plan cards like:
+
+```text
+plan_000001
+summary
+files needed
+files to modify
+files to create
+confidence
+```
+
+Click:
+
+```text
+Select Plan
+```
+
+## Step 4: Replan if needed
+
+If Bob missed important files:
+
+```text
+1. Add files in the Context tab.
+2. Go back to Plans.
+3. Click Replan with Context.
+```
+
+This creates a new indexed plan such as:
+
+```text
+plan_000002
+```
+
+You can select the newer plan or go back to an older plan.
+
+## Step 5: Send selected plan to coder
+
+After selecting the plan, click:
+
+```text
+Code Selected Plan
+```
+
+Bob sends the selected plan and latest forced context to Colab.
+
+The coder returns generated file contents.
+
+## Step 6: Review
+
+Click:
+
+```text
+Review
+```
+
+The reviewer checks the generated files and returns:
+
+```text
+PASS
+```
+
+or:
+
+```text
+FAIL
+```
+
+## Step 7: Proposal cache
+
+Generated files are saved locally first as proposals:
+
+```text
+workspace/<project>/.bob/proposals/
+```
+
+They are not written to actual workspace files yet.
+
+## Step 8: Preview changes
+
+Open Source Control.
+
+Look under:
+
+```text
+Proposed by Bob
+```
+
+Click a proposed file to open a Monaco diff.
+
+The diff shows:
+
+```text
+left: current real file
+right: proposed Bob file
+```
+
+## Step 9: Accept or reject
+
+If the proposal is good, click:
+
+```text
+Apply
+```
+
+This writes the proposal into the real workspace file.
+
+Then Git/source control will show it as a normal modified file.
+
+If the proposal is not good, click:
+
+```text
+Discard
+```
+
+Discarding a Bob proposal does not touch real project files.
+
+---
+
+# Part 16: Source Control behavior
+
+Bob IDE separates two things:
+
+```text
+Bob proposals
+Real Git/project changes
+```
+
+Source Control groups:
+
+```text
+Proposed by Bob
+Changes
+Staged Changes
+Merge Changes
+```
+
+Bob proposals come from:
+
+```text
+.bob/proposals
+```
+
+Real changes come from Git/project files.
+
+A Bob proposal becomes a real source-control change only after clicking Apply.
+
+---
+
+# Part 17: Git setup for workspaces
+
+For best results, initialize Git inside each workspace.
+
+Open a terminal inside a workspace folder:
+
+```powershell
+cd workspace\sample_project
+git init
+git add .
+git commit -m "Initial commit"
+```
+
+After that, Bob IDE can show modified files, staged files, commits, and diffs more reliably.
+
+If Git is not initialized, some source-control features may be limited.
+
+---
+
+# Part 18: Common commands
+
+## Start everything for development
+
+```powershell
+npm run dev
+```
+
+## Start only Python MCP
+
+```powershell
+npm run dev:python
+```
+
+## Start only Node gateway
+
+```powershell
+npm run dev:node
+```
+
+## Start only React frontend
+
+```powershell
+npm run dev:frontend
+```
+
+## Build frontend
+
+```powershell
+npm run build
+```
+
+## Start production server
+
+```powershell
+npm start
+```
+
+## Run all tests
+
+```powershell
+npm test
+```
+
+## Run only frontend build
+
+```powershell
+npm --prefix frontend run build
+```
+
+## Run only frontend lint
+
+```powershell
+npm --prefix frontend run lint
+```
+
+---
+
+# Part 19: Troubleshooting
+
+## npm is blocked in PowerShell
+
+Run:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Then reopen PowerShell.
+
+Or use:
+
+```powershell
+cmd /c npm run dev
+```
+
+## node-pty fails during npm install
+
+Install Visual Studio Build Tools with C++ desktop workload, then run:
+
+```powershell
+npm install
+```
+
+## React opens but API calls fail
+
+Make sure Node is running:
+
+```powershell
+npm run dev:node
+```
+
+Check:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:3000/api/health
+```
+
+## Node says Python MCP is not reachable
+
+Start Python MCP:
+
+```powershell
+npm run dev:python
+```
+
+Then restart Node:
+
+```powershell
+npm run dev:node
+```
+
+## Bob cannot reach Colab
+
+Check the Bob Config tab:
+
+```text
+Base URL must be the ngrok URL without :8000.
+```
+
+Test in PowerShell:
+
+```powershell
+Invoke-RestMethod https://xxxx-xxxx-xxxx.ngrok-free.app/health
+```
+
+## Colab public URL is None
+
+In Colab:
+
+```python
+from pyngrok import ngrok
+ngrok.kill()
+ngrok.set_auth_token(NGROK_AUTHTOKEN)
+public_tunnel = ngrok.connect(8000, "http")
+print(public_tunnel.public_url)
+```
+
+Paste the printed URL into Bob Config.
+
+## Forced context says access denied
+
+Use the latest app files. Forced context is now read through the app and sent as text content.
+
+Try:
+
+```text
+1. Open the file in the editor.
+2. Click Add active file.
+3. Or use Pick file from the Context tab.
+```
+
+## Bob proposals do not show in Source Control
+
+Check that the project has a `.bob/proposals` folder after a coder/reviewer run.
+
+Then refresh Source Control.
+
+## Changes are not showing in Git
+
+Make sure the workspace is a Git repo:
+
+```powershell
+cd workspace\your_project
+git status
+```
+
+If not initialized:
+
+```powershell
+git init
+git add .
+git commit -m "Initial commit"
+```
+
+---
+
+# Part 20: Safe token handling
+
+Do not commit tokens into the project.
+
+Do not put real tokens into README files, docs, or screenshots.
+
+Use placeholders like:
+
+```text
+paste_your_huggingface_token_here
+paste_your_ngrok_token_here
+```
+
+For local app config, use the Bob Config tab or local environment variables.
+
+For Colab, paste tokens into notebook runtime cells only.
+
+---
+
+# Part 21: Recommended daily run order
+
+Use this order:
+
+```text
+1. Open Colab notebook.
+2. Set runtime to GPU.
+3. Run setup/model cells.
+4. Set Hugging Face token if needed.
+5. Set ngrok token.
+6. Start Colab HTTP server.
+7. Copy ngrok URL.
+8. Start local Bob IDE with npm run dev.
+9. Open http://127.0.0.1:5173.
+10. Paste ngrok URL into Bob Config.
+11. Save config.
+12. Test health.
+13. Start planning/coding/reviewing.
+```
+
+---
+
+# Part 22: Useful docs
+
+More detailed design documents are in:
+
+```text
+docs/
+```
+
+Important files:
+
+```text
+docs/COLAB_MCP_HANDOFF.md
+docs/NODE_MCP_REACT_MIGRATION.md
+docs/GIT_COLAB_INTEGRATION_PLAN.md
+docs/STAGED_BOB_PLAN_PROPOSAL_FLOW.md
+```
