@@ -49,6 +49,7 @@ export default function EditorArea() {
     loadWorktree,
     pushToast,
     openFile,
+    confirmDialog,
   } = useIde();
   const editorRef = useRef(null);
   const monacoRef = useRef(null);
@@ -104,6 +105,16 @@ export default function EditorArea() {
     } catch (error) {
       pushToast(error.message, "error");
     }
+  };
+
+  const forceApplyPreview = async () => {
+    if (!activeTab?.proposal) return;
+    if (!(await confirmDialog(`Force apply Bob proposal for "${activeTab.realPath}"? This can overwrite local edits and bypass a failed review.`))) return;
+    await runProposalAction(
+      () => api.proposalOverrideApply(currentProject, activeTab.proposalId, activeTab.realPath),
+      `Force applied ${activeTab.realPath}`,
+      true
+    );
   };
 
   const runHunkAction = async (operation, message) => {
@@ -162,7 +173,7 @@ export default function EditorArea() {
           </div>
         ) : activeTab ? (
           <div className="editor-with-banner">
-            {activeTab.proposal && <div className="proposal-preview-banner"><strong>Bob Proposal Preview</strong><span>{activeTab.realPath} · {activeTab.reviewStatus || "review"} · {activeTab.risk || "risk"}</span><button onClick={() => runProposalAction(() => api.proposalApply(currentProject, activeTab.proposalId, activeTab.realPath), `Applied ${activeTab.realPath}`, true)}><Check size={13} /> Apply</button><button onClick={() => runProposalAction(() => api.proposalDiscard(currentProject, activeTab.proposalId, activeTab.realPath), `Discarded ${activeTab.realPath}`, true)}><RotateCcw size={13} /> Discard</button></div>}
+            {activeTab.proposal && <div className="proposal-preview-banner"><strong>Bob Proposal Preview</strong><span>{activeTab.realPath} · {activeTab.reviewStatus || "review"} · {activeTab.risk || "risk"}</span>{activeTab.reviewStatus !== "FAIL" && <button onClick={() => runProposalAction(() => api.proposalApply(currentProject, activeTab.proposalId, activeTab.realPath), `Applied ${activeTab.realPath}`, true)}><Check size={13} /> Apply</button>}<button onClick={forceApplyPreview}><ShieldAlert size={13} /> Force Apply</button><button onClick={() => runProposalAction(() => api.proposalDiscard(currentProject, activeTab.proposalId, activeTab.realPath), `Discarded ${activeTab.realPath}`, true)}><RotateCcw size={13} /> Discard</button></div>}
             <Editor key={activeTab.path} language={extToLang(activeTab.proposal ? activeTab.realPath : activeTab.path)} value={activeTab.content} theme="bob-dark" beforeMount={handleBeforeMount} onMount={handleMount} onChange={(value) => updateTabContent(activeTab.path, value ?? "")} options={{ readOnly: Boolean(activeTab.readOnly), fontSize: 14, fontFamily: "'JetBrains Mono', 'Cascadia Code', Consolas, monospace", fontLigatures: true, lineHeight: 22, minimap: { enabled: true, scale: 1 }, wordWrap: "on", tabSize: 4, scrollBeyondLastLine: false, renderLineHighlight: "gutter", smoothScrolling: true, cursorBlinking: "phase", cursorSmoothCaretAnimation: "on", bracketPairColorization: { enabled: true }, padding: { top: 12, bottom: 12 }, automaticLayout: true, hover: { enabled: true, delay: 300 }, parameterHints: { enabled: true }, suggestOnTriggerCharacters: true, quickSuggestions: { other: true, comments: false, strings: false }, acceptSuggestionOnCommitCharacter: true, snippetSuggestions: "inline", "semanticHighlighting.enabled": true }} />
           </div>
         ) : (

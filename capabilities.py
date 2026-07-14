@@ -802,6 +802,8 @@ def worktree_apply_all(project: str, override: bool = False) -> dict:
             proposal_store.apply_proposal(project, item["proposal_id"], override=True)
             for item in proposal_store.list_proposals(project)["proposals"]
         ]
+        paths = [path for item in results for path in item["applied"]]
+        _publish("workspace:changed", {"project": project, "paths": paths})
         _source_control_event(project, "proposal:changed")
         return {"project": project, "results": results}
     return proposal_apply_all(project, only_passing=False)

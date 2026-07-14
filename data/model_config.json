@@ -11,7 +11,7 @@
   "stream_path": "/run-agent/stream",
   "run_status_path": "/runs/{run_id}",
   "cancel_path": "/runs/{run_id}/cancel",
-  "timeout": 600,
+  "timeout": 599,
   "max_iterations": 5,
   "context_mode": "workspace",
   "context_budget": 160000,
@@ -19,5 +19,5 @@
   "keep_model_loaded": true,
   "token": "",
   "headers_json": "{}",
-  "updated_at": "2026-07-09T08:04:47.413153Z"
+  "updated_at": "2026-07-14T12:35:05.016250Z"
 }
