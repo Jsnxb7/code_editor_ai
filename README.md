@@ -357,7 +357,7 @@ Frontend production build
 Use this Colab notebook:
 
 ```text
-https://colab.research.google.com/drive/1ThAKq_mPo4fkZN1fSr1SkzL4nyh8_Nnr?usp=sharing](https://colab.research.google.com/drive/1rAXTN3Io5DJBsUYhkGsHgqaN8EhO0E-c?usp=sharing)
+https://colab.research.google.com/drive/1rAXTN3Io5DJBsUYhkGsHgqaN8EhO0E-c?usp=sharing
 ```
 
 Open the notebook in Google Colab.
