@@ -62,6 +62,11 @@ const emptyConfig = {
   context_budget: 160000,
   prefer_streaming: true,
   keep_model_loaded: true,
+  prompt_set_version: "unversioned",
+  model_id: "unknown",
+  model_revision: "unknown",
+  input_token_price_per_million: 0,
+  output_token_price_per_million: 0,
   headers_json: "{}",
   configured: false,
   token_set: false,
@@ -160,7 +165,7 @@ function RunDetails({ message, onOpenProposal, onOpenSourceControl }) {
   );
 }
 
-function ConnectionSettings({ config, setConfig, onSave, onHealth, saving, health, tokenInput, setTokenInput, clearToken, setClearToken }) {
+function ConnectionSettings({ config, setConfig, onSave, onHealth, saving, health }) {
   const statusLabel = health ? (health.ok ? "Connected" : "Health failed") : config.configured ? "Configured" : "Not configured";
   return (
     <section className="bob-connection-card bob-tab-card">
@@ -191,11 +196,9 @@ function ConnectionSettings({ config, setConfig, onSave, onHealth, saving, healt
           <label>Timeout<input type="number" min="5" max="3600" value={config.timeout || 600} onChange={(e) => setConfig((v) => ({ ...v, timeout: e.target.value }))} /></label>
           <label>Context bytes<input type="number" min="10000" max="1000000" step="10000" value={config.context_budget || 160000} onChange={(e) => setConfig((v) => ({ ...v, context_budget: e.target.value }))} /></label>
         </div>
-        <div className="bob-connection-grid">
-          <label>Bearer token<input type="password" value={tokenInput} placeholder={config.token_set ? "Token saved — enter to replace" : "optional-secret"} onChange={(e) => setTokenInput(e.target.value)} /></label>
-          <label>Extra headers JSON<input value={config.headers_json || "{}"} spellCheck="false" onChange={(e) => setConfig((v) => ({ ...v, headers_json: e.target.value }))} /></label>
-        </div>
-        <label className="bob-checkbox-row"><input type="checkbox" checked={clearToken} onChange={(e) => setClearToken(e.target.checked)} /> Clear saved bearer token on save</label>
+        <div className="bob-connection-grid"><label>Model ID<input value={config.model_id || "unknown"} onChange={(e) => setConfig((v) => ({ ...v, model_id: e.target.value }))} /></label><label>Model revision<input value={config.model_revision || "unknown"} onChange={(e) => setConfig((v) => ({ ...v, model_revision: e.target.value }))} /></label></div>
+        <div className="bob-connection-grid"><label>Prompt set version<input value={config.prompt_set_version || "unversioned"} onChange={(e) => setConfig((v) => ({ ...v, prompt_set_version: e.target.value }))} /></label><label>Extra headers JSON<input value={config.headers_json || "{}"} spellCheck="false" onChange={(e) => setConfig((v) => ({ ...v, headers_json: e.target.value }))} /></label></div>
+        <small className="bob-inline-help">Bearer tokens are environment-only. Set <code>BOB_COLAB_TOKEN</code> before starting Bob IDE. Status: {config.token_set ? "configured" : "not configured"}.</small>
         <label className="bob-checkbox-row"><input type="checkbox" checked={config.prefer_streaming !== false} onChange={(e) => setConfig((v) => ({ ...v, prefer_streaming: e.target.checked }))} /> Prefer streaming for Run All</label>
         <label className="bob-checkbox-row"><input type="checkbox" checked={config.keep_model_loaded !== false} onChange={(e) => setConfig((v) => ({ ...v, keep_model_loaded: e.target.checked }))} /> Keep Colab model loaded</label>
         {health && <div className={`bob-health-box ${health.ok ? "ok" : "fail"}`}>{health.ok ? `${health.model || "Colab runtime"} · ${health.contract_version || "contract"}` : health.message || "Health check failed."}</div>}
@@ -228,8 +231,6 @@ export default function BobPanel() {
   const [activeTab, setActiveTab] = useState("chat");
   const [sending, setSending] = useState(false);
   const [config, setConfig] = useState(emptyConfig);
-  const [tokenInput, setTokenInput] = useState("");
-  const [clearToken, setClearToken] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [health, setHealth] = useState(null);
   const [forcedFileTexts, setForcedFileTexts] = useState({});
@@ -321,12 +322,8 @@ export default function BobPanel() {
   const saveConfig = async () => {
     setSavingConfig(true); setHealth(null);
     try {
-      const payload = { ...config };
-      if (tokenInput) payload.token = tokenInput;
-      if (clearToken) payload.token = "";
-      const saved = await api.modelSetConfig(payload);
+      const saved = await api.modelSetConfig({ ...config });
       setConfig({ ...emptyConfig, ...saved });
-      setTokenInput(""); setClearToken(false);
       pushToast("Saved Bob model connection", "success");
     } catch (error) { pushToast(error.message, "error"); }
     finally { setSavingConfig(false); }
@@ -508,7 +505,7 @@ export default function BobPanel() {
         {activeTab === "chat" && renderChat()}
         {activeTab === "plans" && renderPlans()}
         {activeTab === "context" && renderContext()}
-        {activeTab === "config" && <ConnectionSettings config={config} setConfig={setConfig} onSave={saveConfig} onHealth={testHealth} saving={savingConfig} health={health} tokenInput={tokenInput} setTokenInput={setTokenInput} clearToken={clearToken} setClearToken={setClearToken} />}
+        {activeTab === "config" && <ConnectionSettings config={config} setConfig={setConfig} onSave={saveConfig} onHealth={testHealth} saving={savingConfig} health={health} />}
       </div>
     </aside>
   );

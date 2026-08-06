@@ -1,9 +1,16 @@
 const BASE = "/api";
+let csrfToken = "";
+let unauthorizedHandler = null;
+
+export const setCsrfToken = (value = "") => { csrfToken = String(value || ""); };
+export const setUnauthorizedHandler = (handler) => { unauthorizedHandler = handler; };
 
 async function request(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
     ...options,
+    headers: { "Content-Type": "application/json", ...(!["GET", "HEAD", "OPTIONS"].includes(method) && csrfToken ? { "X-CSRF-Token": csrfToken } : {}), ...(options.headers || {}) },
   });
   let body;
   try {
@@ -12,6 +19,7 @@ async function request(path, options = {}) {
     throw new Error(`Request failed (${res.status})`);
   }
   if (!res.ok || body.ok === false) {
+    if (res.status === 401) unauthorizedHandler?.();
     throw new Error(body.error || `Request failed (${res.status})`);
   }
   return body.data !== undefined ? body.data : body;
@@ -24,6 +32,27 @@ const invoke = (name, arguments_ = {}) =>
   });
 
 export const api = {
+  authStatus: () => request("/auth/status"),
+  authSetup: (payload) => request("/auth/setup", { method: "POST", body: JSON.stringify(payload) }),
+  authLogin: (username, password) => request("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
+  authMe: () => request("/auth/me"),
+  authLogout: () => request("/auth/logout", { method: "POST", body: "{}" }),
+  authUsers: () => request("/auth/users"),
+  authCreateUser: (payload) => request("/auth/users", { method: "POST", body: JSON.stringify(payload) }),
+  authUpdateUser: (id, payload) => request(`/auth/users/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  issueApproval: (operation, project, target, reason) => request("/approvals", { method: "POST", body: JSON.stringify({ operation, project, target, reason }) }),
+  devOverview: () => request("/dev/overview"),
+  devDlq: () => request("/dev/dlq"),
+  devClaimDlq: (id, rootCause) => request(`/dev/dlq/${encodeURIComponent(id)}/claim`, { method: "POST", body: JSON.stringify({ root_cause: rootCause }) }),
+  devCorrectDlq: (id, payload) => request(`/dev/dlq/${encodeURIComponent(id)}/correct`, { method: "POST", body: JSON.stringify(payload) }),
+  devDismissDlq: (id, reason) => request(`/dev/dlq/${encodeURIComponent(id)}/dismiss`, { method: "POST", body: JSON.stringify({ reason }) }),
+  devReviews: () => request("/dev/reviews"),
+  devCorrectReview: (id, payload) => request(`/dev/reviews/${encodeURIComponent(id)}/correct`, { method: "POST", body: JSON.stringify(payload) }),
+  devEvaluations: () => request("/dev/evaluations"),
+  devExportEvaluations: () => request("/dev/evaluations/export"),
+  devCreateEvaluation: (payload) => request("/dev/evaluations", { method: "POST", body: JSON.stringify(payload) }),
+  devCorrections: () => request("/dev/corrections"),
+  devLogs: (limit = 300) => request(`/dev/logs?limit=${limit}`),
   tools: () => request("/mcp/tools"),
   status: () => invoke("system.status"),
   workspaces: () => invoke("workspace.list"),
@@ -79,13 +108,15 @@ export const api = {
     invoke("worktree.apply_change", { project, change_id: changeId }),
   worktreeApplyMany: (project, changeIds, override = false) =>
     invoke("worktree.apply_many", { project, change_ids: changeIds, override }),
-  worktreeApplyAll: (project, override = false) =>
-    invoke("worktree.apply_all", { project, override }),
+  worktreeApplyAll: (project, override = false, reason = "", approvalToken = "") =>
+    invoke("worktree.apply_all", { project, override, reason, approval_token: approvalToken }),
   worktreeApplyPassing: (project) => invoke("worktree.apply_passing", { project }),
-  worktreeOverrideApply: (project, changeId) =>
-    invoke("worktree.override_and_apply", { project, change_id: changeId }),
+  worktreeOverrideApply: (project, changeId, reason, approvalToken) =>
+    invoke("worktree.override_and_apply", { project, change_id: changeId, reason, approval_token: approvalToken }),
   worktreeDiscard: (project, changeId) =>
     invoke("worktree.discard_change", { project, change_id: changeId }),
+  worktreeDiscardApproved: (project, changeId, reason, approvalToken) =>
+    invoke("worktree.discard_change", { project, change_id: changeId, reason, approval_token: approvalToken }),
   worktreeDiscardMany: (project, changeIds) =>
     invoke("worktree.discard_many", { project, change_ids: changeIds }),
   worktreeDiscardAll: (project) => invoke("worktree.discard_all", { project }),
@@ -120,10 +151,10 @@ export const api = {
   gitUnstage: (project, path) => invoke("git.unstage", { project, path }),
   gitStageAll: (project) => invoke("git.stage_all", { project }),
   gitUnstageAll: (project) => invoke("git.unstage_all", { project }),
-  gitDiscard: (project, path, staged = false, untracked = false) =>
-    invoke("git.discard", { project, path, staged, untracked }),
-  gitDiscardAll: (project, includeUntracked = false) =>
-    invoke("git.discard_all", { project, include_untracked: includeUntracked }),
+  gitDiscard: (project, path, staged = false, untracked = false, reason = "", approvalToken = "") =>
+    invoke("git.discard", { project, path, staged, untracked, reason, approval_token: approvalToken }),
+  gitDiscardAll: (project, includeUntracked = false, reason = "", approvalToken = "") =>
+    invoke("git.discard_all", { project, include_untracked: includeUntracked, reason, approval_token: approvalToken }),
   gitCommit: (project, message) => invoke("git.commit", { project, message }),
   gitIdentity: (project) => invoke("git.identity", { project }),
   gitSetIdentity: (project, name, email) =>
@@ -147,8 +178,8 @@ export const api = {
     invoke("proposal.preview", { project, proposal_id: proposalId, path }),
   proposalApply: (project, proposalId, path) =>
     invoke("proposal.apply", { project, proposal_id: proposalId, path }),
-  proposalOverrideApply: (project, proposalId, path) =>
-    invoke("proposal.override_apply", { project, proposal_id: proposalId, path }),
+  proposalOverrideApply: (project, proposalId, path, reason, approvalToken) =>
+    invoke("proposal.override_apply", { project, proposal_id: proposalId, path, reason, approval_token: approvalToken }),
   proposalApplyAll: (project, onlyPassing = true) =>
     invoke("proposal.apply_all", { project, only_passing: onlyPassing }),
   proposalDiscard: (project, proposalId, path) =>

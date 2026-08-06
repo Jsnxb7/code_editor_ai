@@ -257,7 +257,7 @@ export function IdeProvider({ children }) {
         const shouldScan = scanDisk;
         scanDisk = false;
         if (!cancelled) refreshWorktreeFromJson({ scanDisk: shouldScan }).catch(() => {});
-      }, 300);
+      }, 75);
     };
 
     const join = () => {
@@ -325,6 +325,10 @@ export function IdeProvider({ children }) {
   );
 
   const createWorkspace = useCallback(async (name) => {
+    const dirty = tabs.some((t) => t.dirty);
+    if (dirty && !(await confirmDialog("You have unsaved changes. Create and switch workspace anyway?"))) {
+      return null;
+    }
     const data = await api.createWorkspace(name);
     await loadWorkspaces(data.project);
     await loadTree(data.project);
@@ -333,7 +337,7 @@ export function IdeProvider({ children }) {
     setActivePath(null);
     pushToast(`Created workspace "${data.project}"`);
     return data.project;
-  }, [loadWorkspaces, loadTree, loadWorktree, pushToast]);
+  }, [tabs, confirmDialog, loadWorkspaces, loadTree, loadWorktree, pushToast]);
 
   const openWorkspaceFolder = useCallback(async () => {
     if (!window.showDirectoryPicker) {

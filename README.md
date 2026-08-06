@@ -356,9 +356,7 @@ Frontend production build
 
 Use this Colab notebook:
 
-```text
-https://colab.research.google.com/drive/1rAXTN3Io5DJBsUYhkGsHgqaN8EhO0E-c?usp=sharing
-```
+[Open the Bob IDE Colab notebook](https://colab.research.google.com/drive/1Uddwha_w4uxxFPWDO4SopG0b8NiiOJyo?usp=sharing)
 
 Open the notebook in Google Colab.
 

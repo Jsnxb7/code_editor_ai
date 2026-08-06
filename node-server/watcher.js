@@ -24,13 +24,14 @@ function shouldIgnore(filePath, workspaceRoot) {
 }
 
 export class WorkspaceWatcher {
-  constructor({ workspaceRoot, io, debounceMs = 80 }) {
+  constructor({ workspaceRoot, io, debounceMs = 80, onRunUpdate = null }) {
     this.workspaceRoot = path.resolve(workspaceRoot);
     this.io = io;
     this.debounceMs = debounceMs;
     this.pending = new Map();
     this.runStates = new Map();
     this.watcher = null;
+    this.onRunUpdate = onRunUpdate;
   }
 
   start() {
@@ -97,6 +98,7 @@ export class WorkspaceWatcher {
         if (this.runStates.get(key) !== signature) {
           this.runStates.set(key, signature);
           this.io.to(room).emit("model:run", { project, ...run });
+          await this.onRunUpdate?.(project, run);
         }
       }
     } catch {

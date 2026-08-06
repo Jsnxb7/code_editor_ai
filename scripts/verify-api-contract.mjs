@@ -12,17 +12,23 @@ const frontendTools = new Set(
 const python = findPython(root);
 const result = spawnSync(
   python.command,
-  [...python.prefix, "-c", "import json; from capabilities import CAPABILITIES; print(json.dumps(sorted(CAPABILITIES)))"],
+  [...python.prefix, "-c", "import json; from capabilities import CAPABILITIES; print(json.dumps([{'name': n, 'description': (f.__doc__ or '').strip()} for n, f in sorted(CAPABILITIES.items())]))"],
   { cwd: root, encoding: "utf8" },
 );
 if (result.status !== 0) {
   console.error(result.stderr || "Unable to load Python capabilities.");
   process.exit(result.status || 1);
 }
-const pythonTools = new Set(JSON.parse(result.stdout.trim()));
+const catalog = JSON.parse(result.stdout.trim());
+const pythonTools = new Set(catalog.map((item) => item.name));
+const undocumented = catalog.filter((item) => !item.description).map((item) => item.name);
 const missing = [...frontendTools].filter((name) => !pythonTools.has(name)).sort();
 if (missing.length) {
   console.error(`Frontend MCP tools missing from Python: ${missing.join(", ")}`);
+  process.exit(1);
+}
+if (undocumented.length) {
+  console.error(`Python MCP tools missing descriptions: ${undocumented.join(", ")}`);
   process.exit(1);
 }
 console.log(`API contract verified: ${frontendTools.size} frontend tools, ${pythonTools.size} Python tools.`);

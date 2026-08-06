@@ -32,13 +32,15 @@ mcp = FastMCP(
 )
 
 for _name, _func in CAPABILITIES.items():
+    if not (_func.__doc__ or "").strip():
+        _func.__doc__ = f"Bob IDE capability: {_name.replace('.', ' ').replace('_', ' ')}."
     mcp.tool(name=_name)(_func)
 
 
 @mcp.resource("bob://capabilities")
 def capability_catalog() -> dict:
-    """List all Bob IDE tool names."""
-    return {"tools": sorted(CAPABILITIES)}
+    """List every Bob IDE tool with its human-readable description."""
+    return {"tools": [{"name": name, "description": (CAPABILITIES[name].__doc__ or "").strip()} for name in sorted(CAPABILITIES)]}
 
 
 def main() -> None:
@@ -59,4 +61,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

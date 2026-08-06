@@ -58,7 +58,7 @@ from bob_core.json_worktree import (
     unstage_change,
 )
 from bob_core.model_service import model_run_status, start_model_run, plan_stage, replan_stage, code_stage, review_stage
-from bob_core.colab_adapter import ColabAdapter
+from bob_core.colab_adapter import ColabAdapter, ColabRetryError
 from bob_core.model_config import read_model_config, save_model_config
 from bob_core import git_service
 from bob_core import proposal_store
@@ -74,6 +74,8 @@ _event_publisher: Callable[[str, dict[str, Any]], None] | None = None
 
 def capability(name: str):
     def decorate(func: Capability) -> Capability:
+        if not (func.__doc__ or "").strip():
+            func.__doc__ = f"Bob IDE capability: {name.replace('.', ' ').replace('_', ' ')}."
         CAPABILITIES[name] = func
         return func
 
@@ -1013,6 +1015,11 @@ def model_set_config(
     keep_model_loaded: bool | None = None,
     token: str | None = None,
     headers_json: str | dict | None = None,
+    prompt_set_version: str | None = None,
+    model_id: str | None = None,
+    model_revision: str | None = None,
+    input_token_price_per_million: float | str | None = None,
+    output_token_price_per_million: float | str | None = None,
 ) -> dict:
     """Persist Colab/model connection settings used by Bob chat and model runs."""
     config = save_model_config(
@@ -1036,6 +1043,11 @@ def model_set_config(
         keep_model_loaded=keep_model_loaded,
         token=token,
         headers_json=headers_json,
+        prompt_set_version=prompt_set_version,
+        model_id=model_id,
+        model_revision=model_revision,
+        input_token_price_per_million=input_token_price_per_million,
+        output_token_price_per_million=output_token_price_per_million,
     )
     _publish("model:config", {"project": "*", "config": config})
     return config
@@ -1066,13 +1078,16 @@ def model_capabilities() -> dict:
 
 
 @capability("model.chat")
-def model_chat(project: str, message: str, active_path: str | None = None) -> dict:
+def model_chat(project: str, message: str, active_path: str | None = None, request_id: str | None = None, actor_user_id: str | None = None) -> dict:
     if not message.strip():
         raise ValueError("Message is required")
     config = read_model_config()
     context = _limited_model_context(project, active_path, int(config.get("context_budget", 160000)))
     payload = {
         "run_id": "chat",
+        "trace_id": "chat",
+        "request_id": request_id,
+        "actor_user_id": actor_user_id,
         "project": project,
         "user_prompt": message,
         "active_path": active_path,
@@ -1086,6 +1101,8 @@ def model_chat(project: str, message: str, active_path: str | None = None) -> di
             "provider": result.get("provider", "colab"),
             **result,
         }
+    except ColabRetryError:
+        raise
     except Exception:
         return assistant_chat(message, project, active_path)
 
@@ -1147,8 +1164,10 @@ def model_plan(
     open_paths: list[str] | None = None,
     max_bytes: int | None = None,
     forced_files: dict[str, str] | None = None,
+    request_id: str | None = None,
+    actor_user_id: str | None = None,
 ) -> dict:
-    result = plan_stage(project, prompt, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, select=True)
+    result = plan_stage(project, prompt, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, select=True, request_id=request_id, actor_user_id=actor_user_id)
     _publish("plans:changed", {"project": project})
     return result
 
@@ -1163,8 +1182,10 @@ def model_replan(
     open_paths: list[str] | None = None,
     max_bytes: int | None = None,
     forced_files: dict[str, str] | None = None,
+    request_id: str | None = None,
+    actor_user_id: str | None = None,
 ) -> dict:
-    result = replan_stage(project, prompt, previous_plan_id, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, select=True)
+    result = replan_stage(project, prompt, previous_plan_id, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, select=True, request_id=request_id, actor_user_id=actor_user_id)
     _publish("plans:changed", {"project": project})
     return result
 
@@ -1178,23 +1199,25 @@ def model_code(
     open_paths: list[str] | None = None,
     max_bytes: int | None = None,
     forced_files: dict[str, str] | None = None,
+    request_id: str | None = None,
+    actor_user_id: str | None = None,
 ) -> dict:
-    result = code_stage(project, plan_id, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {})
+    result = code_stage(project, plan_id, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, request_id=request_id, actor_user_id=actor_user_id)
     _publish("model:run", {"project": project, "run": result.get("run"), "status": "coded"})
     return result
 
 
 @capability("model.review")
-def model_review(project: str, plan_id: str, code: str, files: dict) -> dict:
-    result = review_stage(project, plan_id, code, files)
+def model_review(project: str, plan_id: str, code: str, files: dict, request_id: str | None = None, actor_user_id: str | None = None) -> dict:
+    result = review_stage(project, plan_id, code, files, request_id=request_id, actor_user_id=actor_user_id)
     _publish("proposal:changed", {"project": project})
     _publish("source-control:changed", {"project": project})
     return result
 
 
 @capability("model.run_agent")
-def model_run_agent(project: str, prompt: str, active_path: str | None = None) -> dict:
-    return start_model_run(project, prompt, "agent", active_path)
+def model_run_agent(project: str, prompt: str, active_path: str | None = None, request_id: str | None = None, actor_user_id: str | None = None) -> dict:
+    return start_model_run(project, prompt, "agent", active_path, request_id=request_id, actor_user_id=actor_user_id)
 
 
 @capability("model.run_status")

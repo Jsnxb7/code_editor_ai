@@ -10,7 +10,7 @@ const defaults = {
   host: "127.0.0.1",
   port: 3000,
   mcpUrl: "http://127.0.0.1:8001/mcp",
-  mcpTimeoutMs: 120000,
+  mcpTimeoutMs: 0,
   workspaceRoot: path.join(projectRoot, "workspace"),
   frontendDist: path.join(projectRoot, "frontend", "dist"),
   terminalShell: "",
@@ -22,6 +22,7 @@ function fromEnvironment(config) {
     host: process.env.BOB_HOST || config.host,
     port: Number(process.env.BOB_PORT || config.port),
     mcpUrl: process.env.BOB_MCP_URL || config.mcpUrl,
+    mcpTimeoutMs: Number(process.env.BOB_MCP_TIMEOUT_MS || config.mcpTimeoutMs),
     workspaceRoot: process.env.BOB_WORKSPACE_ROOT || config.workspaceRoot,
     frontendDist: process.env.BOB_FRONTEND_DIST || config.frontendDist,
   };

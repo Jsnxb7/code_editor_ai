@@ -42,7 +42,7 @@ export class BobMcpClient {
       const transport = new StreamableHTTPClientTransport(new URL(config.mcpUrl));
       await withTimeout(
         client.connect(transport),
-        Math.min(config.mcpTimeoutMs, 15000),
+        15000,
         `Python MCP did not respond at ${config.mcpUrl}`,
       );
       this.client = client;
@@ -57,10 +57,9 @@ export class BobMcpClient {
   }
 
   async run(operation) {
-    const config = this.getConfig();
     try {
       const client = await this.connect();
-      return await withTimeout(operation(client), config.mcpTimeoutMs, "MCP request timed out");
+      return await operation(client);
     } catch (error) {
       await this.close();
       throw error;

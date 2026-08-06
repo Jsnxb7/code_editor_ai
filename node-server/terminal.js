@@ -7,10 +7,11 @@ function sessionKey(socketId, terminalId) {
 }
 
 export class TerminalManager {
-  constructor({ workspaceRoot, shell = "", ptyModule = pty }) {
+  constructor({ workspaceRoot, shell = "", ptyModule = pty, authorize = () => true }) {
     this.workspaceRoot = workspaceRoot;
     this.shell = shell;
     this.pty = ptyModule;
+    this.authorize = authorize;
     this.sessions = new Map();
   }
 
@@ -31,6 +32,7 @@ export class TerminalManager {
     const terminalId = String(data.terminalId || "default");
     try {
       const cwd = safeWorkspacePath(this.workspaceRoot, String(data.project || "sample_project"));
+      if (!this.authorize(socket, String(data.project || "sample_project"))) throw new Error("Workspace access denied");
       this.dispose(socket.id, terminalId);
       const shell = this.shell || (os.platform() === "win32" ? process.env.COMSPEC || "powershell.exe" : process.env.SHELL || "/bin/bash");
       const args = os.platform() === "win32" ? [] : ["-i"];

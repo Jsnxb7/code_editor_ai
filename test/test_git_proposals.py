@@ -1,6 +1,7 @@
 import os
 import shutil
 import stat
+import time
 import unittest
 from uuid import uuid4
 
@@ -13,6 +14,17 @@ def remove_readonly(func, path, _error):
     func(path)
 
 
+def remove_test_tree(path):
+    for attempt in range(12):
+        try:
+            shutil.rmtree(path, onerror=remove_readonly)
+            return
+        except OSError:
+            if attempt == 11:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+
+
 class GitProposalTests(unittest.TestCase):
     def setUp(self):
         self.project = f"test_git_{uuid4().hex[:8]}"
@@ -22,7 +34,7 @@ class GitProposalTests(unittest.TestCase):
         git_service.set_identity(self.project, "Bob Test", "bob-test@localhost")
 
     def tearDown(self):
-        shutil.rmtree(self.root, onerror=remove_readonly)
+        remove_test_tree(self.root)
 
     def test_git_status_stage_commit_diff_and_discard(self):
         (self.root / "app.py").write_text("print('one')\n", encoding="utf-8")
@@ -93,6 +105,19 @@ class GitProposalTests(unittest.TestCase):
         )
         self.assertEqual(["app.py"], result["applied"])
         self.assertEqual("proposal\n", (self.root / "app.py").read_text(encoding="utf-8"))
+
+    def test_failed_review_requires_override(self):
+        (self.root / "app.py").write_text("base\n", encoding="utf-8")
+        proposal = proposal_store.create_proposal(
+            self.project,
+            "run_failed",
+            {"app.py": "risky\n"},
+            "FAIL",
+        )
+        with self.assertRaises(PermissionError):
+            proposal_store.apply_proposal(self.project, proposal["proposal_id"], "app.py")
+        proposal_store.apply_proposal(self.project, proposal["proposal_id"], "app.py", override=True)
+        self.assertEqual("risky\n", (self.root / "app.py").read_text(encoding="utf-8"))
 
     def test_stage_one_git_hunk(self):
         original = "".join(f"line {index}\n" for index in range(1, 80))

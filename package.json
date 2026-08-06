@@ -14,11 +14,15 @@
     "test:node": "node --test node-server/test/*.test.js",
     "test:contract": "node scripts/verify-api-contract.mjs",
     "test:live": "node scripts/live-smoke.mjs",
+    "eval:offline": "node scripts/run-python.mjs scripts/run_offline_evals.py",
+    "eval:live": "node scripts/run-python.mjs scripts/run_live_evals.py",
+    "test:notebook": "node scripts/validate-runtime-notebook.mjs",
     "lint": "npm --prefix frontend run lint",
-    "test": "npm run test:python && npm run test:node && npm run test:contract && npm run lint && npm run build"
+    "test": "npm run test:python && npm run test:node && npm run test:contract && npm run test:notebook && npm run eval:offline && npm run lint && npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "bcryptjs": "^3.0.2",
     "chokidar": "^4.0.3",
     "express": "^5.1.0",
     "node-pty": "^1.1.0",

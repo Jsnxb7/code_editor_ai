@@ -36,7 +36,11 @@ DEFAULT_MODEL_CONFIG: dict[str, Any] = {
     "context_budget": 160000,
     "prefer_streaming": True,
     "keep_model_loaded": True,
-    "token": "",
+    "prompt_set_version": "unversioned",
+    "model_id": "unknown",
+    "model_revision": "unknown",
+    "input_token_price_per_million": 0.0,
+    "output_token_price_per_million": 0.0,
     "headers_json": "{}",
     "updated_at": None,
 }
@@ -74,6 +78,9 @@ def _validate_headers_json(value: str | dict | None) -> str:
         raise ValueError("Headers must be valid JSON") from exc
     if not isinstance(parsed, dict):
         raise ValueError("Headers JSON must be an object")
+    forbidden = {str(key).strip().lower() for key in parsed} & {"authorization", "proxy-authorization", "cookie", "set-cookie"}
+    if forbidden:
+        raise ValueError("Authorization and cookie headers are not persisted; use BOB_COLAB_TOKEN for the bearer token")
     return json.dumps(parsed, ensure_ascii=False)
 
 
@@ -109,6 +116,7 @@ def read_model_config(include_secret: bool = False) -> dict[str, Any]:
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     saved = load_json(CONFIG_PATH, DEFAULT_MODEL_CONFIG.copy())
+    saved.pop("token", None)
     merged = {**DEFAULT_MODEL_CONFIG, **saved}
     env = _env_config()
     for key, value in env.items():
@@ -163,11 +171,17 @@ def save_model_config(
     keep_model_loaded: bool | None = None,
     token: str | None = None,
     headers_json: str | dict | None = None,
+    prompt_set_version: str | None = None,
+    model_id: str | None = None,
+    model_revision: str | None = None,
+    input_token_price_per_million: float | str | None = None,
+    output_token_price_per_million: float | str | None = None,
 ) -> dict[str, Any]:
     from datetime import datetime, timezone
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     current = load_json(CONFIG_PATH, DEFAULT_MODEL_CONFIG.copy())
+    current.pop("token", None)
     if base_url is not None:
         current["base_url"] = str(base_url).strip().rstrip("/")
     for key, value, fallback in (
@@ -200,7 +214,16 @@ def save_model_config(
     if keep_model_loaded is not None:
         current["keep_model_loaded"] = bool(keep_model_loaded)
     if token is not None:
-        current["token"] = str(token)
+        raise ValueError("Bearer tokens are environment-only. Set BOB_COLAB_TOKEN before starting Bob IDE.")
+    for key, value in (("prompt_set_version", prompt_set_version), ("model_id", model_id), ("model_revision", model_revision)):
+        if value is not None:
+            current[key] = str(value).strip()[:200] or DEFAULT_MODEL_CONFIG[key]
+    for key, value in (("input_token_price_per_million", input_token_price_per_million), ("output_token_price_per_million", output_token_price_per_million)):
+        if value is not None:
+            try:
+                current[key] = max(0.0, float(value))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{key} must be a non-negative number") from exc
     if headers_json is not None:
         current["headers_json"] = _validate_headers_json(headers_json)
     current["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")

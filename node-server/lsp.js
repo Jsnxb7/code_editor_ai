@@ -67,18 +67,27 @@ class PyrightProcess {
 }
 
 export class LspManager {
-  constructor({ io, workspaceRoot }) {
+  constructor({ io, workspaceRoot, authenticate = () => null, authorize = () => true }) {
     this.namespace = io.of("/lsp");
     this.workspaceRoot = workspaceRoot;
+    this.authenticate = authenticate;
+    this.authorize = authorize;
     this.processes = new Map();
     this.clients = new Map();
   }
 
   register() {
+    this.namespace.use((socket, next) => {
+      const context = this.authenticate(socket.request);
+      if (!context) return next(new Error("Authentication required"));
+      socket.data.auth = context;
+      next();
+    });
     this.namespace.on("connection", (socket) => {
       socket.on("lsp:join", (data = {}) => {
         try {
           const project = String(data.project || "");
+          if (!this.authorize(socket.data.auth.user, project)) throw new Error("Workspace access denied");
           const root = safeWorkspacePath(this.workspaceRoot, project);
           socket.join(project);
           socket.data.project = project;

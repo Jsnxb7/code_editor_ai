@@ -208,6 +208,8 @@ def get_preview(project: str, proposal_id: str, path: str) -> dict:
 def apply_proposal(project: str, proposal_id: str, path: str | None = None, override: bool = False) -> dict:
     with project_lock(project):
         data, proposal = _find(project, proposal_id)
+        if proposal.get("review_status") == "FAIL" and not override:
+            raise PermissionError("Reviewer-failed proposals require Force Apply and Stage approval")
         selected = [_file(proposal, path)] if path else [item for item in proposal["files"] if item.get("status") in {"proposed", "conflict"}]
         applied, conflicts = [], []
         for record in selected:

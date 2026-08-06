@@ -11,6 +11,10 @@ export default function CommandPalette() {
     saveActiveTab,
     saveAllTabs,
     saveWorkspaceToFolder,
+    projects,
+    selectProject,
+    createWorkspace,
+    promptDialog,
     validateActiveFile,
     runTests,
     createTerminal,
@@ -38,6 +42,23 @@ export default function CommandPalette() {
       { label: "File: Open Folder", run: openWorkspaceFolder },
       { label: "File: Save Workspace to Folder", run: saveWorkspaceToFolder },
       { label: "File: Quick Open…", run: () => setQuickOpenOpen(true) },
+      {
+        label: "Workspace: New Workspace",
+        run: async () => {
+          const name = await promptDialog("New workspace name:");
+          if (!name) return;
+          try {
+            await createWorkspace(name);
+          } catch (err) {
+            pushToast(err.message, "error");
+          }
+        },
+      },
+      ...projects.map((project) => ({
+        label: `Workspace: Switch to ${project}`,
+        run: () => selectProject(project),
+        enabled: project !== currentProject,
+      })),
       { label: "Run: Validate Current File", run: validateActiveFile, enabled: !!activePath },
       { label: "Run: pytest", run: runTests },
       {
@@ -61,6 +82,10 @@ export default function CommandPalette() {
       saveAllTabs,
       openWorkspaceFolder,
       saveWorkspaceToFolder,
+      projects,
+      selectProject,
+      createWorkspace,
+      promptDialog,
       validateActiveFile,
       runTests,
       createTerminal,
@@ -72,7 +97,7 @@ export default function CommandPalette() {
       runInTerminal,
       setSidebarView,
       loadWorktree,
-    refreshWorktreeFromJson,
+      refreshWorktreeFromJson,
       currentProject,
       worktreeStatus,
       pushToast,

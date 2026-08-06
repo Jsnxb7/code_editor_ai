@@ -1,6 +1,7 @@
 import os
 import shutil
 import stat
+import time
 import unittest
 from uuid import uuid4
 
@@ -12,6 +13,17 @@ from bob_core.proposal_store import create_proposal
 def remove_readonly(func, path, _error):
     os.chmod(path, stat.S_IWRITE)
     func(path)
+
+
+def remove_test_tree(path):
+    for attempt in range(12):
+        try:
+            shutil.rmtree(path, onerror=remove_readonly)
+            return
+        except OSError:
+            if attempt == 11:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 class WorktreeCompatibilityTests(unittest.TestCase):
@@ -30,7 +42,7 @@ class WorktreeCompatibilityTests(unittest.TestCase):
         invoke("git.commit", {"project": self.project, "message": "Baseline"})
 
     def tearDown(self):
-        shutil.rmtree(self.root, onerror=remove_readonly)
+        remove_test_tree(self.root)
 
     def test_worktree_aliases_use_git(self):
         invoke("file.write", {

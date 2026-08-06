@@ -12,8 +12,15 @@ import DialogModal from "./components/DialogModal";
 import CommandPalette from "./components/CommandPalette";
 import QuickOpen from "./components/QuickOpen";
 import Resizer from "./components/Resizer";
+import DeveloperPanel from "./components/DeveloperPanel";
+import { useAuth } from "./context/AuthContext";
 
 export default function App() {
+  const { devPanelOpen } = useAuth();
+  return devPanelOpen ? <DeveloperPanel /> : <IdeApp />;
+}
+
+function IdeApp() {
   const {
     loadWorkspaces,
     loadTree,
