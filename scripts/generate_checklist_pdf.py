@@ -104,25 +104,25 @@ sections = [
     ], "Contract tests cover the complete tool catalogue; additional malformed external-model fixtures can deepen field-accuracy measurement."),
 
     ("6. Classification Evaluation", [
-        row("Confusion matrix", "N", "Bob IDE does not expose a classification model."),
-        row("Accuracy", "N", "There is no labeled classification outcome; use task-success measures instead."),
-        row("Precision", "N", "There is no positive-class decision to score."),
-        row("Recall", "N", "There is no positive-class decision to score."),
-        row("F1", "N", "There is no classifier label set."),
-        row("Macro average", "N", "No multi-class classification task exists."),
-        row("Weighted average", "N", "No multi-class classification task exists."),
-    ], "If an intent, safety or risk classifier is later introduced, add labeled per-class metrics based on failure cost."),
+        row("Confusion matrix", "P", "The Bob reviewer is evaluated as a binary PASS/FAIL classifier over 44 labeled cases: TP 17, FN 2, FP 2 and TN 23.", "output/evals/expanded-model-performance-20260806/expanded-metrics.json"),
+        row("Accuracy", "P", "Reviewer accuracy is 90.9% across the complete case timeline."),
+        row("Precision", "P", "FAIL-class precision is 89.5%, measuring how often a predicted defect is real."),
+        row("Recall", "P", "FAIL-class recall is 89.5%, with two genuine defects missed."),
+        row("F1", "P", "FAIL-class F1 is 89.5%; balanced accuracy is 90.7% and MCC is 0.815."),
+        row("Macro average", "N", "The reviewer decision is binary; per-class metrics and balanced accuracy are more directly interpretable."),
+        row("Weighted average", "N", "The binary evaluation reports class counts, precision, recall, specificity, F1 and MCC directly."),
+    ], "The positive class is FAIL (a defect is present). Python-generated charts, per-case CSV evidence and detailed FP/FN adjudications are included in the evaluation appendix."),
 
     ("7. Agent Evaluation", [
-        row("Tool selection", "A", "Tool calls are logged, but the 12-case dataset does not yet label the expected tool for every scenario."),
+        row("Tool selection", "A", "Tool calls are logged, but the current datasets do not yet label the expected tool for every scenario."),
         row("Tool arguments", "A", "Schemas validate shape; semantic argument correctness still needs expected-value assertions."),
         row("Planning", "A", "Offline cases validate deterministic plan contracts, but plan quality is not yet scored against gold steps."),
         row("Memory", "A", "Workflow memory persists, but useful recall versus unnecessary context is not benchmarked."),
         row("Hallucination", "A", "No automated unsupported-claim or invented-file detector is present."),
         row("Grounding", "A", "Human groundedness scores exist, but automatic evidence linkage is not yet evaluated."),
-        row("Task success", "A", "Software checks and 12 offline cases pass, but representative executable end-to-end coding tasks are still needed."),
+        row("Task success", "P", "Four generated-code tasks passed all nine deterministic tests; broader JavaScript, React and multi-file coverage remains addable."),
         row("Human approval", "P", "Protected force actions cannot bypass server-issued, user-, workspace-, operation- and target-bound approval tokens."),
-    ], "The evaluation foundation is present. The next batch should turn the 12 cases into quality assertions for tools, plans, generated changes and executable outcomes."),
+    ], "Reviewer classification and generated-code task success are measured. Tool choice, semantic argument quality, plan scoring and memory quality remain the next agent-evaluation layer."),
 
     ("8. Human Evaluation", [
         row("Correctness", "P", "Admins assign a required integer score from 1 to 5 and revisions are preserved."),
@@ -156,7 +156,7 @@ sections = [
 
     ("11. LLMOps", [
         row("Prompt version", "P", "Every model stage can carry BOB_PROMPT_SET_VERSION and stores the effective version."),
-        row("Dataset version", "P", "The 12 deterministic cases use a versioned dataset manifest and stable IDs.", "evals/cases.json"),
+        row("Dataset version", "P", "Versioned manifests and stable IDs cover 44 reviewer cases plus generated-code and replan checks.", "evals/model_performance_cases.json; evals/reviewer_challenge_cases.json; evals/reviewer_fp_probe_cases.json"),
         row("Model version", "P", "Provider, model ID, model revision and runtime contract version are recorded."),
         row("Evaluation pipeline", "P", "npm test runs software tests, tool contracts, notebook validation, 12 offline evaluations, lint and build."),
         row("A/B testing", "A", "No paired prompt/model comparison or traffic split is implemented."),
@@ -197,8 +197,8 @@ production = [
     row("AI - Tools", "P", "A documented MCP capability registry exposes deterministic actions."),
     row("AI - Memory", "P", "Workflow, identity, ownership and quality records persist in versioned JSON."),
     row("AI - RAG", "N", "RAG is unnecessary for the current selected-file coding workflow."),
-    row("Evaluation - Dataset", "P", "Twelve versioned normal, edge, failure and adversarial cases exist."),
-    row("Evaluation - Metrics", "P", "Offline pass rate plus human rubric, error, retry, latency, token, cost and feedback measures are available."),
+    row("Evaluation - Dataset", "P", "Forty-four reviewer cases share one ordered timeline, with generated-code and replan cases retained in versioned manifests."),
+    row("Evaluation - Metrics", "P", "Confusion matrix, accuracy, precision, recall, specificity, F1, balanced accuracy, MCC, latency, token usage and task-test results are available."),
     row("Evaluation - Human evaluation", "P", "Admin evaluations preserve 1-5 rubric revisions and verdict metadata."),
     row("Debugging - Logs", "P", "Redacted request/tool/model/auth/audit events are persisted."),
     row("Debugging - Traces", "P", "Request, trace/run and user IDs link gateway, model and notebook stages."),
@@ -229,7 +229,7 @@ production = [
 all_rows = [item for _, rows, _ in sections for item in rows] + production
 counts = {code: sum(1 for item in all_rows if item["status"] == code) for code in ("P", "A", "N")}
 assert len(all_rows) == 132, len(all_rows)
-assert counts == {"P": 90, "A": 23, "N": 19}, counts
+assert counts == {"P": 96, "A": 22, "N": 14}, counts
 
 
 def status_label(code: str) -> str:
@@ -326,7 +326,7 @@ def build():
     story += [Paragraph("Executive reassessment", styles["Section"]), Paragraph("Bob IDE now satisfies the planned local/demo authentication and governance boundary. The largest gains are server-side identity and ownership enforcement, retry/DLQ reliability, Admin-only quality operations, human evaluation, prompt/model/version telemetry, user feedback and a hardened Lightning/Colab notebook contract.", styles["Body"]), metric_cards(), Spacer(1, 5 * mm)]
     delta = Table([
         [Paragraph("MEASURE", styles["TableHead"]), Paragraph("PREVIOUS AUDIT", styles["TableHead"]), Paragraph("UPDATED", styles["TableHead"]), Paragraph("CHANGE", styles["TableHead"])],
-        ["Checked", "40", "90", "+50"], ["Can add", "72", "23", "-49"], ["Not needed", "20", "19", "-1"],
+        ["Checked", "40", "96", "+56"], ["Can add", "72", "22", "-50"], ["Not needed", "20", "14", "-6"],
     ], colWidths=[55 * mm, 38 * mm, 38 * mm, 38 * mm])
     delta.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), NAVY), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("ALIGN", (1, 1), (-1, -1), "CENTER"), ("GRID", (0, 0), (-1, -1), 0.5, LINE), ("BACKGROUND", (0, 1), (-1, -1), LIGHT), ("FONTSIZE", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
     story += [delta, Spacer(1, 5 * mm), Paragraph("Newly completed controls", styles["Subsection"])]
@@ -335,13 +335,13 @@ def build():
         "Admin/User RBAC, owner-only workspaces and authenticated REST, MCP gateway, Socket.IO, LSP and terminal application boundaries.",
         "Three-attempt transient retry, dlq_pending runs, immutable attempt history and Admin correction/dismissal workflow.",
         "Failed-review quality records plus user-controlled Force Apply and Stage with a reason and one-time approval token.",
-        "Five-dimension human evaluation with revisions, prompt corrections, exports and a 12-case versioned offline dataset.",
+        "Five-dimension human evaluation with revisions, prompt corrections, exports and a versioned evaluation dataset.",
         "Redacted request/tool/model/auth/audit JSONL, usage/cost/latency summaries and accepted/rejected/force-applied feedback.",
         "Lightning/Colab v4 contract with mandatory bearer authentication, serialized GPU requests, usage, tracing and safe errors.",
     ]:
         story.append(Paragraph(f"- {text}", styles["Body"]))
     story.append(Paragraph("Verification", styles["Subsection"]))
-    story.append(Paragraph("The complete repository command passed: 18 Python tests, 9 Node tests, a 95-frontend/104-Python tool contract, notebook validation, all 12 offline evaluations, frontend lint and production build. Remaining warnings are Fast Refresh organization and bundle size, not test failures.", styles["Body"]))
+    story.append(Paragraph("The repository verification command passed Python and Node tests, frontend/Python tool contracts, notebook validation, offline evaluations, frontend lint and the production build. The model evidence appendix separately records 44 live reviewer cases, nine generated-code assertions and redacted runtime telemetry.", styles["Body"]))
     story.append(PageBreak())
 
     for title, rows, metric in sections:
@@ -356,7 +356,7 @@ def build():
         ("3. Five likely failure modes", "Incorrect plan; missing context; unsafe or malformed code; Lightning/ngrok outage; and a reviewer-failed proposal being forced by a user. Each now has a visible control or audit record."),
         ("4. How are failures detected?", "Pydantic validation, structured errors, reviewer PASS/FAIL, hash conflicts, retry exhaustion, DLQ creation, feedback, health endpoints and Admin quality records."),
         ("5. How does the system recover?", "Replan, safe fallback, three transient attempts, DLQ classification/correction, proposal discard, Git restore and explicit user-owned Force Apply and Stage."),
-        ("6. How do we know a version is better?", "The versioned dataset, human revisions, feedback and telemetry are now a baseline. Gold task/tool assertions and paired A/B evaluation are still needed for defensible model-quality comparison."),
+        ("6. How do we know a version is better?", "The versioned reviewer dataset, confusion metrics, generated-code tests, human revisions, feedback and telemetry establish a measurable baseline. Paired A/B evaluation is still needed for causal model or prompt comparisons."),
         ("7. How are data and secrets protected?", "The app uses sessions, RBAC, ownership, CSRF, redaction and environment-only bearer configuration. PII detection and encryption at rest remain open."),
         ("8. Cost per successful task", "Token cost can now be estimated when prices are configured and acceptance feedback is stored. A report joining cost to accepted executable task success remains addable."),
         ("9. What breaks from 10 to 1 million users?", "Local JSON, single-process Node/Python services, the serialized GPU runtime, ngrok, provider quotas and lack of load balancing, autoscaling, databases and distributed queues."),
@@ -368,7 +368,7 @@ def build():
 
     story += [Paragraph("Recommended next additions", styles["Section"])]
     roadmap = [
-        ("1. Agent-quality evaluation", "Expand the 12 cases into gold tool selections, argument assertions, plan-quality anchors and executable code acceptance tests."),
+        ("1. Agent-quality evaluation", "Add gold tool selections, argument assertions, plan-quality anchors and broader executable acceptance tests to the reviewer and generated-code evidence."),
         ("2. Privacy and encrypted persistence", "Add configurable PII detection, data retention/deletion rules and encryption-at-rest key management."),
         ("3. Production monitoring", "Add percentile metrics, health/resource collection, alert thresholds, uptime checks and incident runbooks."),
         ("4. Reproducible deployment", "Containerize the frontend/gateway/MCP services, define durable storage/backups and add CI/CD plus rollback."),
@@ -376,7 +376,7 @@ def build():
     ]
     for heading, body in roadmap:
         story.append(KeepTogether([Paragraph(heading, styles["Subsection"]), Paragraph(body, styles["Body"])]))
-    story += [Spacer(1, 7 * mm), Paragraph("Scope decisions", styles["Subsection"]), Paragraph("RAG, classification metrics, load balancing and autoscaling are not impossible; they remain not needed for the current selected-file, trusted local/demo IDE. RBAC is no longer out of scope because Admin and User roles are now implemented. The integrated terminal remains explicitly outside hardened multi-tenant OS isolation.", styles["Body"])]
+    story += [Spacer(1, 7 * mm), Paragraph("Scope decisions", styles["Subsection"]), Paragraph("RAG, load balancing and autoscaling remain unnecessary for the current selected-file, trusted local/demo IDE. Binary classification metrics now apply to the reviewer PASS/FAIL decision. RBAC is implemented, while the integrated terminal remains explicitly outside hardened multi-tenant OS isolation.", styles["Body"])]
 
     doc.build(story)
     print(OUTPUT)
