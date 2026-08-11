@@ -14,7 +14,7 @@ function redact(value) {
     [/(password|passwd|api[_-]?key|secret|token)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]"],
   ];
   for (const [pattern, replacement] of rules) text = text.replace(pattern, replacement);
-  for (const secret of [process.env.BOB_COLAB_TOKEN, ...(String(process.env.BOB_REDACT_VALUES || "").split(","))].filter((item) => String(item || "").length >= 6)) text = text.split(secret).join("[REDACTED_CONFIGURED_SECRET]");
+  for (const secret of [process.env.BOB_COLAB_TOKEN, ...(String(process.env.BOB_REDACT_VALUES || "").split(","))].filter((item) => String(item || "").length > 0)) text = text.split(secret).join("[REDACTED_CONFIGURED_SECRET]");
   return text.slice(0, 100_000);
 }
 function sanitize(value, key = "") {
@@ -42,10 +42,33 @@ export class DevStore {
     fs.appendFileSync(file, `${JSON.stringify(safe)}\n`, "utf8"); this.emit?.("audit:changed", { type, timestamp: safe.timestamp });
   }
   logs(query = {}) {
-    try {
-      const limit = Math.max(1, Math.min(Number(query.limit) || 300, 1000));
-      return fs.readFileSync(path.join(this.runtimeRoot, "events.jsonl"), "utf8").trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line)).filter((item) => (!query.type || item.type === query.type) && (!query.request_id || item.request_id === query.request_id) && (!query.actor_user_id || item.actor_user_id === query.actor_user_id)).slice(-limit).reverse();
-    } catch { return []; }
+    const limit = Math.max(1, Math.min(Number(query.limit) || 300, 1000));
+    const sourceFiles = {
+      app: "events.jsonl",
+      model: "model-events.jsonl",
+      ngrok: "ngrok-events.jsonl",
+    };
+    const requestedSource = String(query.source || "app").toLowerCase();
+    const sources = requestedSource === "all" ? Object.keys(sourceFiles) : [requestedSource];
+    if (sources.some((source) => !sourceFiles[source])) return [];
+    const records = [];
+    for (const source of sources) {
+      try {
+        const lines = fs.readFileSync(path.join(this.runtimeRoot, sourceFiles[source]), "utf8").trim().split(/\r?\n/).filter(Boolean);
+        for (const line of lines) {
+          try { records.push({ source, ...JSON.parse(line) }); } catch {}
+        }
+      } catch (error) { if (error.code !== "ENOENT") throw error; }
+    }
+    return records.filter((item) => {
+      const event = item.type || item.event;
+      return (!query.type || event === query.type)
+        && (!query.event || event === query.event)
+        && (!query.request_id || item.request_id === query.request_id)
+        && (!query.trace_id || item.trace_id === query.trace_id)
+        && (!query.run_id || item.run_id === query.run_id)
+        && (!query.actor_user_id || item.actor_user_id === query.actor_user_id);
+    }).sort((left, right) => String(right.timestamp || right.finished_at || "").localeCompare(String(left.timestamp || left.finished_at || ""))).slice(0, limit);
   }
   list(kind) { const key = kind === "reviews" ? "reviews" : kind; return read(this.files[kind], key); }
   detail(kind, id) { const key = kind === "reviews" ? "reviews" : kind; const item = this.list(kind)[key].find((value) => value.id === id); if (!item) throw Object.assign(new Error("Developer record not found"), { status: 404 }); return item; }

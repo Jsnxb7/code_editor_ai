@@ -8,7 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from bob_core.contracts import PlanContract
 
-dataset = json.loads((ROOT / "evals" / "cases.json").read_text(encoding="utf-8"))
+consolidated = json.loads((ROOT / "evals" / "consolidated_cases.json").read_text(encoding="utf-8"))
+dataset = consolidated["offline_suite"]
 results = []
 for case in dataset["cases"]:
     plan = PlanContract.model_validate(case["fixture"])

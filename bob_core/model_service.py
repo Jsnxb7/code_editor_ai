@@ -12,7 +12,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from bob_core.colab_adapter import ColabAdapter, ColabRetryError
+from bob_core.colab_adapter import ColabAdapter, ColabRetryError, normalize_plan
 from bob_core.context_builder import build_context
 from bob_core.json_worktree import create_run, get_run, record_model_stage, update_run
 from bob_core.plan_store import create_plan, get_plan, mark_plan_status, select_plan
@@ -318,6 +318,101 @@ def review_stage(
     _emit(project, run_id, "completed", run=get_run(project, run_id), proposals=[proposal])
     _emit_changed(project, "proposal:changed", "source-control:changed", "worktree:changed")
     return {"run": get_run(project, run_id), "review": review, "final_status": final_status, "proposal": proposal}
+
+
+def direct_code_review_stage(
+    project: str,
+    prompt: str,
+    active_path: str | None = None,
+    forced_paths: list[str] | None = None,
+    open_paths: list[str] | None = None,
+    max_bytes: int | None = None,
+    forced_files: dict[str, str] | None = None,
+    request_id: str | None = None,
+    actor_user_id: str | None = None,
+) -> dict[str, Any]:
+    """Send a request directly to the coder and always review it before proposing files."""
+    if not str(prompt or "").strip():
+        raise ValueError("A direct coder request is required")
+    run = create_run(project, prompt, "direct_code")
+    run_id = run["run_id"]
+    plan = normalize_plan({
+        "task_type": "direct_code",
+        "summary": str(prompt).strip()[:500],
+        "confidence": 1.0,
+        "output_mode": "ready_for_coder",
+        "need_workspace_scan": True,
+        "need_file_contents": True,
+        "required_context": list(forced_paths or []),
+        "files_needed": list(forced_paths or []),
+        "reasoning_steps": ["Use the supplied request and workspace context directly.", "Return complete proposed files for mandatory review."],
+        "coder_prompt": str(prompt).strip(),
+    })
+    update_run(
+        project,
+        run_id,
+        status="direct_coder_ready",
+        plan=plan,
+        trace_id=run_id,
+        request_id=request_id,
+        actor_user_id=actor_user_id,
+        started_at=_now(),
+    )
+    plan_record = create_plan(project, run_id, prompt, plan, context_used={"files": list(forced_paths or [])}, selected=True)
+    coded = code_stage(project, plan_record["plan_id"], active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, request_id=request_id, actor_user_id=actor_user_id)
+    reviewed = review_stage(project, plan_record["plan_id"], coded.get("code", ""), coded.get("files", {}), request_id=request_id, actor_user_id=actor_user_id)
+    return {
+        **reviewed,
+        "plan_record": plan_record,
+        "code": coded.get("code", ""),
+        "files": coded.get("files", {}),
+        "flow": "direct_coder_then_mandatory_reviewer",
+    }
+
+
+def run_agent_stage(
+    project: str,
+    prompt: str,
+    active_path: str | None = None,
+    request_id: str | None = None,
+    actor_user_id: str | None = None,
+) -> dict[str, Any]:
+    """Run planner, coder, and reviewer synchronously inside one queue reservation."""
+    run = create_run(project, prompt, "agent")
+    run_id = run["run_id"]
+    context = _build_payload(project, prompt, active_path)
+    context.update({"run_id": run_id, "trace_id": run_id, "request_id": request_id, "actor_user_id": actor_user_id})
+    update_run(project, run_id, status="running", trace_id=run_id, request_id=request_id, actor_user_id=actor_user_id, context_metadata=_context_metadata(context), started_at=_now())
+    _emit(project, run_id, "running", run=get_run(project, run_id))
+    adapter = ColabAdapter()
+    started = time.perf_counter()
+    try:
+        result = adapter.run_agent(context)
+    except Exception as exc:
+        _record_stage_failure(project, run_id, "agent", exc)
+        raise
+    plan = result.get("plan", {})
+    record_model_stage(project, run_id, "planner", plan)
+    plan_record = create_plan(project, run_id, prompt, plan, context_used={"files": list(context.get("files", {}))}, selected=True)
+    record_model_stage(project, run_id, "coder", {"code": result.get("code", ""), "files": result.get("files", {})})
+    record_model_stage(project, run_id, "reviewer", {"review": result.get("review", ""), "final_status": result.get("final_status", "FAIL")})
+    proposal = create_proposal(project, run_id, result.get("files", {}), result.get("final_status", "FAIL"), summary=plan.get("summary", ""), review=result.get("review", ""))
+    record = update_run(
+        project,
+        run_id,
+        status="completed",
+        plan=plan,
+        plan_id=plan_record["plan_id"],
+        review=result.get("review", ""),
+        final_status=result.get("final_status", "FAIL"),
+        **_metadata(adapter, started, result),
+        linked_proposals=[proposal["proposal_id"]],
+        linked_changes=[f"proposal:{proposal['proposal_id']}:{item['path']}" for item in proposal.get("files", [])],
+        linked_files=[item["path"] for item in proposal.get("files", [])],
+    )
+    _emit(project, run_id, "completed", run=record, proposals=[proposal])
+    _emit_changed(project, "plans:changed", "proposal:changed", "source-control:changed", "worktree:changed")
+    return {"run": record, "plan_record": plan_record, "proposal": proposal, "flow": "planner_coder_mandatory_reviewer"}
 
 
 # ---- Compatibility queued flow ----

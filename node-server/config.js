@@ -14,6 +14,7 @@ const defaults = {
   workspaceRoot: path.join(projectRoot, "workspace"),
   frontendDist: path.join(projectRoot, "frontend", "dist"),
   terminalShell: "",
+  terminalSandboxImage: "",
 };
 
 function fromEnvironment(config) {
@@ -25,6 +26,7 @@ function fromEnvironment(config) {
     mcpTimeoutMs: Number(process.env.BOB_MCP_TIMEOUT_MS || config.mcpTimeoutMs),
     workspaceRoot: process.env.BOB_WORKSPACE_ROOT || config.workspaceRoot,
     frontendDist: process.env.BOB_FRONTEND_DIST || config.frontendDist,
+    terminalSandboxImage: process.env.BOB_TERMINAL_SANDBOX_IMAGE || config.terminalSandboxImage,
   };
 }
 
@@ -39,7 +41,7 @@ export function readConfig() {
 }
 
 export function writeConfig(updates) {
-  const allowed = ["mcpUrl", "mcpTimeoutMs", "terminalShell"];
+  const allowed = ["mcpUrl", "mcpTimeoutMs", "terminalShell", "terminalSandboxImage"];
   const current = readConfig();
   const stored = {};
   for (const key of allowed) {
@@ -62,5 +64,6 @@ export function publicConfig(config = readConfig()) {
     workspaceRoot: config.workspaceRoot,
     frontendDist: config.frontendDist,
     terminalShell: config.terminalShell,
+    terminalSandboxImage: config.terminalSandboxImage,
   };
 }

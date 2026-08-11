@@ -7,11 +7,13 @@ import random
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
 from bob_core.model_config import read_model_config
 from bob_core.contracts import CodeContract, PlanContract, ReviewContract, Usage
+from bob_core.structured_logging import log_tunnel, prompt_metadata
 
 
 class ColabRetryError(RuntimeError):
@@ -123,27 +125,84 @@ class ColabAdapter:
     def _request(self, request: urllib.request.Request, timeout: int) -> dict:
         attempts: list[dict[str, Any]] = []
         deadline = time.monotonic() + max(1, timeout)
+        parsed_url = urllib.parse.urlsplit(request.full_url)
+        try:
+            request_payload = json.loads((request.data or b"{}").decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            request_payload = {}
+        request_id = request_payload.get("request_id")
+        trace_id = request_payload.get("trace_id") or request_payload.get("run_id")
+        run_id = request_payload.get("run_id")
+        evaluation_metadata = {
+            key: request_payload.get(key)
+            for key in (
+                "evaluation_run_id",
+                "test_id",
+                "test_name",
+                "prompt_category",
+                "pair_id",
+                "approach",
+                "pipeline_id",
+                "model_lane",
+            )
+        }
+        tunnel_provider = "ngrok" if "ngrok" in str(parsed_url.hostname or "").lower() else "direct"
+        log_tunnel(
+            "tunnel.request",
+            request_id=request_id,
+            trace_id=trace_id,
+            run_id=run_id,
+            method=request.get_method(),
+            host=parsed_url.hostname,
+            path=parsed_url.path,
+            tunnel_provider=tunnel_provider,
+            request_size_bytes=len(request.data or b""),
+            **evaluation_metadata,
+            **prompt_metadata(request_payload.get("user_prompt") or request_payload.get("prompt") or request_payload.get("message")),
+        )
         for attempt in range(1, 4):
             started = time.monotonic()
             try:
                 remaining = max(1, int(deadline - started))
                 with urllib.request.urlopen(request, timeout=remaining) as response:
-                    body = json.loads(response.read().decode("utf-8"))
+                    raw_body = response.read()
+                    body = json.loads(raw_body.decode("utf-8"))
                 if not isinstance(body, dict):
                     raise ValueError("Colab response must be a JSON object")
                 body["runtime_attempt_count"] = int(body.get("attempt_count") or 1)
                 body["attempt_count"] = attempt
+                log_tunnel(
+                    "tunnel.response",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    run_id=run_id,
+                    method=request.get_method(),
+                    host=parsed_url.hostname,
+                    path=parsed_url.path,
+                    tunnel_provider=tunnel_provider,
+                    attempt=attempt,
+                    status=int(getattr(response, "status", 200)),
+                    duration_ms=round((time.monotonic() - started) * 1000),
+                    response_size_bytes=len(raw_body),
+                    outcome="success",
+                    **evaluation_metadata,
+                )
                 return self._with_usage(body)
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")[:500]
                 retryable = exc.code == 429 or 500 <= exc.code <= 599
                 attempts.append({"attempt": attempt, "status": exc.code, "duration_ms": round((time.monotonic() - started) * 1000), "error": detail})
+                log_tunnel("tunnel.error", request_id=request_id, trace_id=trace_id, run_id=run_id, method=request.get_method(), host=parsed_url.hostname, path=parsed_url.path, tunnel_provider=tunnel_provider, attempt=attempt, status=exc.code, duration_ms=attempts[-1]["duration_ms"], retryable=retryable, error={"type": type(exc).__name__, "message": detail}, **evaluation_metadata)
                 if not retryable:
                     raise RuntimeError(f"Colab returned HTTP {exc.code}: {detail}") from exc
                 last_error: Exception = exc
             except (urllib.error.URLError, TimeoutError) as exc:
                 attempts.append({"attempt": attempt, "status": None, "duration_ms": round((time.monotonic() - started) * 1000), "error": str(exc)[:500]})
+                log_tunnel("tunnel.error", request_id=request_id, trace_id=trace_id, run_id=run_id, method=request.get_method(), host=parsed_url.hostname, path=parsed_url.path, tunnel_provider=tunnel_provider, attempt=attempt, status=None, duration_ms=attempts[-1]["duration_ms"], retryable=True, error={"type": type(exc).__name__, "message": str(exc)[:500]}, **evaluation_metadata)
                 last_error = exc
+            except ValueError as exc:
+                log_tunnel("tunnel.error", request_id=request_id, trace_id=trace_id, run_id=run_id, method=request.get_method(), host=parsed_url.hostname, path=parsed_url.path, tunnel_provider=tunnel_provider, attempt=attempt, status=None, duration_ms=round((time.monotonic() - started) * 1000), retryable=False, error={"type": type(exc).__name__, "message": str(exc)[:500]}, **evaluation_metadata)
+                raise
             if attempt < 3 and time.monotonic() < deadline:
                 time.sleep(min(0.25 * (2 ** (attempt - 1)) + random.uniform(0, 0.15), max(0, deadline - time.monotonic())))
         raise ColabRetryError(f"Colab request failed after 3 attempts: {last_error}", attempts) from last_error

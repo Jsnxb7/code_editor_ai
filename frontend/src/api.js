@@ -52,7 +52,11 @@ export const api = {
   devExportEvaluations: () => request("/dev/evaluations/export"),
   devCreateEvaluation: (payload) => request("/dev/evaluations", { method: "POST", body: JSON.stringify(payload) }),
   devCorrections: () => request("/dev/corrections"),
-  devLogs: (limit = 300) => request(`/dev/logs?limit=${limit}`),
+  devLogs: (filters = {}) => {
+    const query = new URLSearchParams({ source: "all", limit: "300" });
+    for (const [key, value] of Object.entries(filters)) if (value !== undefined && value !== null && String(value).trim()) query.set(key, String(value).trim());
+    return request(`/dev/logs?${query}`);
+  },
   tools: () => request("/mcp/tools"),
   status: () => invoke("system.status"),
   workspaces: () => invoke("workspace.list"),
@@ -195,8 +199,11 @@ export const api = {
     invoke("model.replan", { project, prompt, previous_plan_id: previousPlanId, active_path: activePath, forced_paths: forcedPaths, open_paths: openPaths, max_bytes: maxBytes, forced_files: forcedFiles }),
   modelCode: (project, planId, activePath, forcedPaths = [], openPaths = [], maxBytes = null, forcedFiles = {}) =>
     invoke("model.code", { project, plan_id: planId, active_path: activePath, forced_paths: forcedPaths, open_paths: openPaths, max_bytes: maxBytes, forced_files: forcedFiles }),
+  modelCodeDirect: (project, prompt, activePath, forcedPaths = [], openPaths = [], maxBytes = null, forcedFiles = {}) =>
+    invoke("model.code_direct", { project, prompt, active_path: activePath, forced_paths: forcedPaths, open_paths: openPaths, max_bytes: maxBytes, forced_files: forcedFiles }),
   modelReview: (project, planId, code, files) =>
     invoke("model.review", { project, plan_id: planId, code, files }),
+  modelQueueStatus: () => invoke("model.queue_status"),
   modelRunAgent: (project, prompt, activePath) =>
     invoke("model.run_agent", { project, prompt, active_path: activePath }),
   modelRunStatus: (project, runId) =>

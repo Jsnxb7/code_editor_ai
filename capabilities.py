@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from config import WORKSPACE_DIR
 from bob_core.command_runner import run_pytest, run_python, stop_python
+from bob_core.execution_env import workspace_process_env
 from bob_core.file_manager import (
     create_file,
     create_folder,
@@ -57,7 +58,8 @@ from bob_core.json_worktree import (
     unstage_all,
     unstage_change,
 )
-from bob_core.model_service import model_run_status, start_model_run, plan_stage, replan_stage, code_stage, review_stage
+from bob_core.model_service import model_run_status, plan_stage, replan_stage, code_stage, review_stage, direct_code_review_stage, run_agent_stage
+from bob_core.model_queue import FairModelQueue
 from bob_core.colab_adapter import ColabAdapter, ColabRetryError
 from bob_core.model_config import read_model_config, save_model_config
 from bob_core import git_service
@@ -102,6 +104,30 @@ def _publish(event: str, payload: dict[str, Any]) -> None:
         _event_publisher(event, payload)
 
 
+MODEL_QUEUE = FairModelQueue(on_change=lambda snapshot: _publish("model:queue", {
+    "lane_count": 1,
+    "model_busy": snapshot.get("model_busy", False),
+    "queue_depth": snapshot.get("queue_depth", 0),
+    "total_depth": snapshot.get("total_depth", 0),
+}))
+
+
+def _queued_model_call(
+    tool: str,
+    project: str | None,
+    actor_user_id: str | None,
+    request_id: str | None,
+    operation: Callable[[], Any],
+) -> Any:
+    return MODEL_QUEUE.run(
+        actor_user_id=actor_user_id,
+        workspace_id=project,
+        request_id=request_id,
+        tool=tool,
+        operation=operation,
+    )
+
+
 def normalize_workspace_name(name: str) -> str:
     normalized = re.sub(r"\s+", "_", name.strip())
     if not normalized:
@@ -109,6 +135,21 @@ def normalize_workspace_name(name: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", normalized):
         raise ValueError("Use only letters, numbers, spaces, underscores, or hyphens")
     return normalized
+
+
+def normalize_workspace_scope(scope: str | None) -> str | None:
+    if scope is None:
+        return None
+    normalized = str(scope).strip()
+    if not re.fullmatch(r"[a-z0-9._-]{3,32}--[0-9a-f-]{36}", normalized):
+        raise ValueError("Invalid user workspace scope")
+    return normalized
+
+
+def scoped_project(name: str, scope: str | None = None) -> str:
+    name = normalize_workspace_name(name)
+    normalized_scope = normalize_workspace_scope(scope)
+    return f"{normalized_scope}/{name}" if normalized_scope else name
 
 
 @capability("system.status")
@@ -124,17 +165,23 @@ def system_status() -> dict:
 
 
 @capability("workspace.list")
-def workspace_list() -> dict:
+def workspace_list(scope: str | None = None) -> dict:
     """List available workspace projects."""
+    normalized_scope = normalize_workspace_scope(scope)
+    if normalized_scope:
+        user_root = WORKSPACE_DIR / normalized_scope
+        user_root.mkdir(parents=True, exist_ok=True)
+        return {"projects": sorted(item.name for item in user_root.iterdir() if item.is_dir())}
     return {"projects": list_projects()}
 
 
 @capability("workspace.create")
-def workspace_create(name: str) -> dict:
+def workspace_create(name: str, scope: str | None = None) -> dict:
     """Create a workspace with starter Python and test files."""
     name = normalize_workspace_name(name)
+    project = scoped_project(name, scope)
     WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
-    target = WORKSPACE_DIR / name
+    target = WORKSPACE_DIR / project
     if target.exists():
         raise FileExistsError("Workspace already exists")
     target.mkdir(parents=True)
@@ -142,30 +189,31 @@ def workspace_create(name: str) -> dict:
     (target / "test.py").write_text(
         "def test_workspace_ready():\n    assert True\n", encoding="utf-8"
     )
-    git_service.init_repo(name)
+    git_service.init_repo(project)
     _publish("workspace:changed", {"project": name, "paths": ["main.py", "test.py"]})
     return {"project": name}
 
 
 @capability("workspace.import")
 def workspace_import(
-    name: str, files: list[dict], folders: list[str] | None = None
+    name: str, files: list[dict], folders: list[str] | None = None, scope: str | None = None
 ) -> dict:
     """Import an in-memory folder tree into a new workspace."""
     name = normalize_workspace_name(name)
+    project = scoped_project(name, scope)
     folders = folders or []
     if not isinstance(files, list) or not isinstance(folders, list):
         raise ValueError("Invalid workspace payload")
-    target = WORKSPACE_DIR / name
+    target = WORKSPACE_DIR / project
     if target.exists():
         raise FileExistsError("Workspace already exists")
     try:
         target.mkdir(parents=True)
         for folder in folders:
-            create_folder(name, folder)
+            create_folder(project, folder)
         for item in files:
-            save_file(name, item.get("path", ""), item.get("content", ""))
-        git_service.init_repo(name)
+            save_file(project, item.get("path", ""), item.get("content", ""))
+        git_service.init_repo(project)
     except Exception:
         if target.exists():
             shutil.rmtree(target)
@@ -266,9 +314,9 @@ def code_search(project: str, query: str) -> dict:
 
 
 @capability("code.run_python")
-def code_run_python(project: str, path: str, timeout: int = 15) -> dict:
+def code_run_python(project: str, path: str, timeout: int = 15, actor_user_id: str | None = None) -> dict:
     """Run a Python file and return captured output."""
-    return run_python(project, path, timeout)
+    return run_python(project, path, timeout, actor_user_id)
 
 
 @capability("code.stop_python")
@@ -278,7 +326,7 @@ def code_stop_python(project: str, path: str) -> dict:
 
 
 @capability("terminal.execute")
-def terminal_execute(project: str, command: str, timeout: int = 30) -> dict:
+def terminal_execute(project: str, command: str, timeout: int = 30, actor_user_id: str | None = None) -> dict:
     """Run a non-interactive shell command inside a workspace."""
     from bob_core.file_manager import safe_path
 
@@ -292,6 +340,7 @@ def terminal_execute(project: str, command: str, timeout: int = 30) -> dict:
             text=True,
             timeout=max(1, min(timeout, 300)),
             shell=True,
+            env=workspace_process_env(project, actor_user_id),
         )
         return {
             "command": command,
@@ -309,9 +358,9 @@ def terminal_execute(project: str, command: str, timeout: int = 30) -> dict:
 
 
 @capability("test.pytest")
-def test_pytest(project: str = "sample_project") -> dict:
+def test_pytest(project: str = "sample_project", actor_user_id: str | None = None) -> dict:
     """Run pytest in a workspace and return its result."""
-    return run_pytest(project)
+    return run_pytest(project, actor_user_id)
 
 
 def _limited_model_context(project: str, active_path: str | None = None, budget: int = 160_000) -> dict:
@@ -1094,17 +1143,19 @@ def model_chat(project: str, message: str, active_path: str | None = None, reque
         "context_mode": config.get("context_mode", "workspace"),
         **context,
     }
-    try:
-        result = ColabAdapter().chat(payload)
-        return {
-            "reply": result.get("reply") or result.get("message") or result.get("response") or "",
-            "provider": result.get("provider", "colab"),
-            **result,
-        }
-    except ColabRetryError:
-        raise
-    except Exception:
-        return assistant_chat(message, project, active_path)
+    def operation() -> dict:
+        try:
+            result = ColabAdapter().chat(payload)
+            return {
+                "reply": result.get("reply") or result.get("message") or result.get("response") or "",
+                "provider": result.get("provider", "colab"),
+                **result,
+            }
+        except ColabRetryError:
+            raise
+        except Exception:
+            return assistant_chat(message, project, active_path)
+    return _queued_model_call("model.chat", project, actor_user_id, request_id, operation)
 
 
 @capability("context.build")
@@ -1167,7 +1218,7 @@ def model_plan(
     request_id: str | None = None,
     actor_user_id: str | None = None,
 ) -> dict:
-    result = plan_stage(project, prompt, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, select=True, request_id=request_id, actor_user_id=actor_user_id)
+    result = _queued_model_call("model.plan", project, actor_user_id, request_id, lambda: plan_stage(project, prompt, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, select=True, request_id=request_id, actor_user_id=actor_user_id))
     _publish("plans:changed", {"project": project})
     return result
 
@@ -1185,7 +1236,7 @@ def model_replan(
     request_id: str | None = None,
     actor_user_id: str | None = None,
 ) -> dict:
-    result = replan_stage(project, prompt, previous_plan_id, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, select=True, request_id=request_id, actor_user_id=actor_user_id)
+    result = _queued_model_call("model.replan", project, actor_user_id, request_id, lambda: replan_stage(project, prompt, previous_plan_id, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, select=True, request_id=request_id, actor_user_id=actor_user_id))
     _publish("plans:changed", {"project": project})
     return result
 
@@ -1202,14 +1253,14 @@ def model_code(
     request_id: str | None = None,
     actor_user_id: str | None = None,
 ) -> dict:
-    result = code_stage(project, plan_id, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, request_id=request_id, actor_user_id=actor_user_id)
+    result = _queued_model_call("model.code", project, actor_user_id, request_id, lambda: code_stage(project, plan_id, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, request_id=request_id, actor_user_id=actor_user_id))
     _publish("model:run", {"project": project, "run": result.get("run"), "status": "coded"})
     return result
 
 
 @capability("model.review")
 def model_review(project: str, plan_id: str, code: str, files: dict, request_id: str | None = None, actor_user_id: str | None = None) -> dict:
-    result = review_stage(project, plan_id, code, files, request_id=request_id, actor_user_id=actor_user_id)
+    result = _queued_model_call("model.review", project, actor_user_id, request_id, lambda: review_stage(project, plan_id, code, files, request_id=request_id, actor_user_id=actor_user_id))
     _publish("proposal:changed", {"project": project})
     _publish("source-control:changed", {"project": project})
     return result
@@ -1217,7 +1268,38 @@ def model_review(project: str, plan_id: str, code: str, files: dict, request_id:
 
 @capability("model.run_agent")
 def model_run_agent(project: str, prompt: str, active_path: str | None = None, request_id: str | None = None, actor_user_id: str | None = None) -> dict:
-    return start_model_run(project, prompt, "agent", active_path, request_id=request_id, actor_user_id=actor_user_id)
+    return _queued_model_call("model.run_agent", project, actor_user_id, request_id, lambda: run_agent_stage(project, prompt, active_path, request_id=request_id, actor_user_id=actor_user_id))
+
+
+@capability("model.code_direct")
+def model_code_direct(
+    project: str,
+    prompt: str,
+    active_path: str | None = None,
+    forced_paths: list[str] | None = None,
+    open_paths: list[str] | None = None,
+    max_bytes: int | None = None,
+    forced_files: dict[str, str] | None = None,
+    request_id: str | None = None,
+    actor_user_id: str | None = None,
+) -> dict:
+    """Queue a direct coder request and require reviewer completion before returning."""
+    result = _queued_model_call(
+        "model.code_direct",
+        project,
+        actor_user_id,
+        request_id,
+        lambda: direct_code_review_stage(project, prompt, active_path, forced_paths or [], open_paths or [], max_bytes, forced_files or {}, request_id=request_id, actor_user_id=actor_user_id),
+    )
+    _publish("proposal:changed", {"project": project})
+    _publish("source-control:changed", {"project": project})
+    return result
+
+
+@capability("model.queue_status")
+def model_queue_status(actor_user_id: str | None = None) -> dict:
+    """Return the caller's place in the shared single-lane model queue."""
+    return MODEL_QUEUE.snapshot(actor_user_id)
 
 
 @capability("model.run_status")

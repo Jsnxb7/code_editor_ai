@@ -19,3 +19,32 @@ test("DLQ corrections create linked evaluations and redact secrets", () => {
     assert.equal(store.overview().input_tokens, 12);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test("runtime JSONL logs redact even short configured secrets", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bob-dev-log-"));
+  const previous = process.env.BOB_COLAB_TOKEN; process.env.BOB_COLAB_TOKEN = "tiny";
+  try {
+    const store = new DevStore({ dataRoot: root });
+    store.appendLog("model.test", { message: "token=tiny Bearer abc.def.ghi", authorization: "Bearer hidden", code: "do not store" });
+    const [record] = store.logs(); const encoded = JSON.stringify(record);
+    assert.doesNotMatch(encoded, /tiny|abc\.def\.ghi|do not store/);
+    assert.equal(record.authorization, undefined); assert.equal(record.code, undefined);
+  } finally {
+    if (previous === undefined) delete process.env.BOB_COLAB_TOKEN; else process.env.BOB_COLAB_TOKEN = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("developer logs correlate app, model, and ngrok records", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bob-dev-sources-"));
+  try {
+    const store = new DevStore({ dataRoot: root });
+    store.appendLog("http.request", { request_id: "req-1", trace_id: "trace-1", run_id: "run-1" });
+    fs.writeFileSync(path.join(root, "runtime", "model-events.jsonl"), `${JSON.stringify({ timestamp: "2026-08-07T10:00:01.000Z", event: "model.stage", request_id: "req-1", trace_id: "trace-1", run_id: "run-1" })}\n`);
+    fs.writeFileSync(path.join(root, "runtime", "ngrok-events.jsonl"), `${JSON.stringify({ timestamp: "2026-08-07T10:00:02.000Z", event: "tunnel.response", request_id: "req-1", trace_id: "trace-1", run_id: "run-1" })}\n`);
+    const records = store.logs({ source: "all", trace_id: "trace-1" });
+    assert.deepEqual(new Set(records.map((record) => record.source)), new Set(["app", "model", "ngrok"]));
+    assert.equal(store.logs({ source: "model", event: "model.stage", run_id: "run-1" }).length, 1);
+    assert.equal(store.logs({ source: "ngrok", request_id: "different" }).length, 0);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

@@ -16,6 +16,12 @@
     "test:live": "node scripts/live-smoke.mjs",
     "eval:offline": "node scripts/run-python.mjs scripts/run_offline_evals.py",
     "eval:live": "node scripts/run-python.mjs scripts/run_live_evals.py",
+    "eval:three:prepare": "node scripts/run-python.mjs scripts/verify_consolidated_evaluation.py",
+    "eval:three:live": "node scripts/run-python.mjs scripts/run_three_approach_live_evals.py",
+    "eval:three:snapshot": "node scripts/run-python.mjs scripts/run_three_approach_live_evals.py --snapshot-only",
+    "eval:three:artifacts": "node scripts/run-python.mjs scripts/build_three_approach_artifacts.py --output output/evals/consolidated/run-workspace && node scripts/run-python.mjs scripts/verify_three_approach_artifacts.py --output output/evals/consolidated/run-workspace",
+    "eval:consolidate": "node scripts/run-python.mjs scripts/consolidate_evaluation_history.py",
+    "eval:verify": "node scripts/run-python.mjs scripts/verify_consolidated_evaluation.py",
     "test:notebook": "node scripts/validate-runtime-notebook.mjs",
     "lint": "npm --prefix frontend run lint",
     "test": "npm run test:python && npm run test:node && npm run test:contract && npm run test:notebook && npm run eval:offline && npm run lint && npm run build"

@@ -38,6 +38,69 @@ Use the React app for the IDE, Node for the app server and realtime layer, Pytho
 
 ---
 
+## Multi-user runtime model
+
+- Authentication sessions, CSRF tokens, workspace ownership, Socket.IO rooms, PTYs, and Pyright processes are bound to the authenticated user. Physical projects live at `workspace/<username>--<user-id>/<project>`; only the final project name is exposed to the frontend.
+- The authenticated Node gateway converts every public project name to the caller's physical project reference before calling MCP. This permits different users to use the same project name without sharing files, events, terminals, LSP state, or ownership records.
+- Every terminal, including an admin terminal, fails closed unless `BOB_TERMINAL_SANDBOX_IMAGE` is set. When configured, Docker bind-mounts only the authenticated user's project bundle at `/workspace`; sibling users and host parent directories are not mounted. The terminal starts in the IDE's active project, follows project changes, permits navigation among that user's projects, and rejects attempts to `cd` above the user root. The prompt shows only virtual paths such as `bob:/project-a/src`. The image includes `python`, `python3`, `pip`, and `venv`; the container also uses a read-only system root, no network, dropped capabilities, CPU/memory/PID limits, and `no-new-privileges`.
+- Non-admin `terminal.execute`, `code.run_python`, and `test.pytest` MCP calls are denied because they would otherwise execute under the shared host account. Run those commands through the container terminal, or move them to the same container worker design before enabling them.
+- All model-generating MCP tools (`model.chat`, plan/replan, code, direct code, review, and run-all) share one fair in-process lane. Waiting work alternates between users when possible. `model.queue_status` exposes only the caller's job details.
+- `model.code_direct` skips planning but still executes the mandatory reviewer before returning a proposal. `model.run_agent` remains planner → coder → reviewer.
+- Keep Python MCP bound to `127.0.0.1` or a private container network and expose only the authenticated Node gateway. Direct public MCP access would bypass the gateway's user/workspace authorization.
+- Run exactly one Python MCP process while using the in-process single lane. If MCP is horizontally scaled, replace the in-memory lane with a shared Redis/SQS-backed worker queue before adding replicas.
+- Directory scoping is application isolation; the Docker terminal is the hostile-command boundary. Do not grant users the host shell or mount the Docker socket inside their terminal container.
+
+---
+
+## Structured runtime logs
+
+Bob writes secret-redacted, rotating JSONL logs for the application, model pipeline, and ngrok transport. Logs contain request/trace/run IDs, stages, status, attempts, latency, usage, sizes, and errors; they do not contain prompt text, generated code, workspace contents, credentials, cookies, or authorization headers.
+
+Local IDE logs are stored in:
+
+```text
+data/runtime/events.jsonl          App, API, Socket.IO, terminal, tool, auth, and audit events
+data/runtime/model-events.jsonl    Model run and stage events
+data/runtime/ngrok-events.jsonl    Colab/ngrok request, response, retry, and error events
+```
+
+Each file rotates at approximately 10 MB to a `.1` backup. An authenticated Admin can query one stream with `/api/dev/logs?source=app|model|ngrok`, or correlate all streams with `/api/dev/logs?source=all&trace_id=<trace-id>`. The same endpoint supports `request_id`, `run_id`, `actor_user_id`, `type`/`event`, and `limit` filters.
+
+The verified Lightning/Colab notebook writes its remote runtime logs to `bob_runtime_logs/` by default. Set `BOB_RUNTIME_LOG_DIR` before running the contract/start cells to choose another persistent mounted directory. The notebook prints the resolved location when it starts.
+
+The updated `Untitled28_lightning_ai_bob_runtime (1).ipynb` has a Phase 0.2A switch for `single` or `multi` runtime mode and defaults to the production-safe single lane. Set `BOB_RUNTIME_MODE=multi` and optionally `BOB_MULTI_LANE_COUNT=2` or `3` before running the notebook to override it for a larger GPU. `BOB_PRELOAD_MODEL_LANES=1` (the default) loads exactly the configured number of replicas sequentially before Flask starts; use `0` only for deliberate lazy loading. Restart the kernel before changing modes. Every core cell is tagged as compatible with both modes, while mode-sensitive startup cells are labeled explicitly. In multi mode, each request must retain the same `pipeline_id` and `model_lane` through its stages.
+
+---
+
+## Three-approach live evaluation
+
+The unified evaluation contains 74 unchanged as-is prompts, 74 paired naturalized rewrites, and 30 new natural-user prompts. Every prompt variant is evaluated with direct coder + model reviewer, the same direct coder response + a blind thresholded evaluator, and the complete planner + coder + reviewer pipeline.
+
+```powershell
+$env:BOB_PYTHON="C:\path\to\python.exe"
+$env:BOB_ALLOW_LIVE_EVAL="1"
+$env:BOB_COLAB_BASE_URL="https://your-ngrok-runtime"
+$env:BOB_COLAB_TOKEN="your-runtime-token"
+
+npm run eval:three:prepare
+node scripts/run-python.mjs scripts/run_three_approach_live_evals.py --limit-cases 178 --concurrency 3
+npm run eval:three:artifacts
+npm run eval:consolidate
+npm run eval:verify
+```
+
+The live runner uses one sequential queue per remote model lane. A lane never overlaps two pipelines, while the three independent lanes run concurrently. Checkpoint writes are lock-protected and atomic, and every record carries `evaluation_run_id`, `pipeline_id`, `model_lane`, case/test ID, approach, stage, request ID and trace ID. Successful call keys resume without repetition. Its restricted master JSON contains prompts, generated code, reviews and test evidence; the operational JSONL logs contain identifiers, hashes and sizes instead of prompt or code contents.
+
+The canonical case catalog is `evals/consolidated_cases.json`. It contains the 12 offline cases, historical endpoint suites, 74 source requirements, 178 current prompt variants and their source/reference metadata. New live runs use `output/evals/consolidated/run-workspace/` as their temporary checkpoint and artifact directory.
+
+The accepted evaluation history is stored in only two output JSON files: `output/evals/consolidated/consolidated_evaluation.json` contains all accepted historical runs and analysis, while `output/evals/consolidated/consolidated_verification.json` contains source hashes, backup metadata, integrity checks and cleanup provenance. The nine-page chart book is `output/pdf/consolidated-evaluation-charts.pdf`. Operational app, model and ngrok logs remain separate JSONL files under `data/runtime/` and are not duplicated into the evidence master.
+
+The lossless pre-consolidation recovery archive is `output/archive/evaluation-history-preconsolidation-20260810.zip`. It contains all 247 imported source files and can reconstruct the retired per-run directories; its SHA-256 is recorded in the consolidated verification JSON.
+
+To freeze a stopped live run without making network calls, use `node scripts/run-python.mjs scripts/run_three_approach_live_evals.py --snapshot-only`. After a completed run, build its temporary artifacts, import them into the consolidated history, and run `npm run eval:verify` before removing the temporary workspace.
+
+---
+
 ## Folder layout
 
 ```text

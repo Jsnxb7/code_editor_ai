@@ -5,12 +5,14 @@ from __future__ import annotations
 import difflib
 import fnmatch
 import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from bob_core.file_manager import is_allowed_text_file, safe_path
 from bob_core.json_store import load_json, project_lock, save_json_atomic
+from bob_core.structured_logging import log_model, prompt_metadata
 from config import IGNORED_DIRS, MAX_FILE_SIZE
 
 SCHEMA_VERSION = "0.1"
@@ -1010,6 +1012,7 @@ def create_run(project: str, prompt: str, mode: str) -> dict:
         data = _read(project, "runs.json", "runs")
         data["runs"].append(record)
         _write(project, "runs.json", data)
+        log_model("model.run_created", project=project, run_id=run_id, trace_id=run_id, mode=mode, status="queued", **prompt_metadata(prompt))
         return record
 
 
@@ -1022,6 +1025,26 @@ def update_run(project: str, run_id: str, **updates: Any) -> dict:
         record.update(updates)
         record["updated_at"] = _now()
         _write(project, "runs.json", data)
+        log_model(
+            "model.run_state",
+            project=project,
+            run_id=run_id,
+            trace_id=updates.get("trace_id") or record.get("trace_id") or run_id,
+            request_id=updates.get("request_id") or record.get("request_id"),
+            actor_user_id=updates.get("actor_user_id") or record.get("actor_user_id"),
+            status=record.get("status"),
+            final_status=record.get("final_status"),
+            updated_fields=sorted(updates),
+            duration_ms=updates.get("duration_ms"),
+            attempt_count=updates.get("attempt_count"),
+            provider=updates.get("provider"),
+            model_id=updates.get("model_id"),
+            model_revision=updates.get("model_revision"),
+            prompt_version=updates.get("prompt_version"),
+            usage=updates.get("usage"),
+            estimated_cost_usd=updates.get("estimated_cost_usd"),
+            error=updates.get("error"),
+        )
         return record
 
 
@@ -1049,4 +1072,24 @@ def record_model_stage(project: str, run_id: str, stage: str, output: Any) -> di
         data = _read(project, "model_runs.json", "model_runs")
         data["model_runs"].append(record)
         _write(project, "model_runs.json", data)
+        encoded = json.dumps(output, ensure_ascii=False, default=str).encode("utf-8")
+        metadata = output if isinstance(output, dict) else {}
+        log_model(
+            "model.stage_persisted",
+            project=project,
+            run_id=run_id,
+            trace_id=metadata.get("trace_id") or run_id,
+            request_id=metadata.get("request_id"),
+            stage=stage,
+            output_sha256=hashlib.sha256(encoded).hexdigest(),
+            output_size_bytes=len(encoded),
+            final_status=metadata.get("final_status"),
+            attempt_count=metadata.get("attempt_count"),
+            provider=metadata.get("provider"),
+            model=metadata.get("model") or metadata.get("model_id"),
+            model_revision=metadata.get("model_revision"),
+            prompt_version=metadata.get("prompt_version"),
+            usage=metadata.get("usage"),
+            estimated_cost_usd=metadata.get("estimated_cost_usd"),
+        )
         return record

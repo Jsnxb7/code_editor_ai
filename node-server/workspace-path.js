@@ -17,5 +17,12 @@ export function safeWorkspacePath(workspaceRoot, project, relativePath = "") {
   if (!fs.existsSync(projectRoot) || !fs.statSync(projectRoot).isDirectory()) {
     throw new Error("Workspace project not found");
   }
+  const realRoot = fs.realpathSync(root);
+  const realProject = fs.realpathSync(projectRoot);
+  if (realProject === realRoot || !realProject.startsWith(`${realRoot}${path.sep}`)) throw new Error("Workspace project escapes storage root");
+  let existing = target;
+  while (!fs.existsSync(existing) && existing !== projectRoot) existing = path.dirname(existing);
+  const realExisting = fs.realpathSync(existing);
+  if (realExisting !== realProject && !realExisting.startsWith(`${realProject}${path.sep}`)) throw new Error("Path escapes selected workspace project through a link");
   return target;
 }

@@ -66,6 +66,8 @@ class CapabilityRegistryTests(unittest.TestCase):
             "model.set_config",
             "model.health",
             "model.plan",
+            "model.code_direct",
+            "model.queue_status",
             "model.run_agent",
             "model.run_status",
         }

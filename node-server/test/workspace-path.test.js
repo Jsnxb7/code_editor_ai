@@ -1,20 +1,21 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { readConfig } from "../config.js";
 import { safeWorkspacePath } from "../workspace-path.js";
 
 test("workspace paths stay inside the selected project", () => {
-  const config = readConfig();
-  const target = safeWorkspacePath(config.workspaceRoot, "sample_project", "app.py");
-  assert.equal(target, path.join(config.workspaceRoot, "sample_project", "app.py"));
-  assert.throws(
-    () => safeWorkspacePath(config.workspaceRoot, "sample_project", "../Hello/app.py"),
-    /escapes selected workspace/,
-  );
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "bob-path-"));
+  const projectRef = "worker--00000000-0000-0000-0000-000000000001/sample_project";
+  fs.mkdirSync(path.join(root, ...projectRef.split("/")), { recursive: true });
+  try {
+    const target = safeWorkspacePath(root, projectRef, "app.py");
+    assert.equal(target, path.join(root, ...projectRef.split("/"), "app.py"));
+    assert.throws(() => safeWorkspacePath(root, projectRef, "../../admin--00000000-0000-0000-0000-000000000002/secret/app.py"), /escapes selected workspace/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("workspace project traversal is rejected", () => {
-  const config = readConfig();
-  assert.throws(() => safeWorkspacePath(config.workspaceRoot, ".."), /Invalid workspace/);
+  assert.throws(() => safeWorkspacePath(path.resolve("workspace"), ".."), /Invalid workspace/);
 });

@@ -29,6 +29,7 @@ const STAGE_MODES = [
   { id: "chat", label: "Chat", icon: MessageSquare },
   { id: "plan", label: "Plan", icon: ListChecks },
   { id: "code", label: "Code", icon: Code2 },
+  { id: "direct", label: "Direct", icon: Sparkles },
   { id: "review", label: "Review", icon: CheckCircle2 },
   { id: "agent", label: "Run All", icon: Play },
 ];
@@ -225,7 +226,7 @@ export default function BobPanel() {
     promptDialog,
   } = useIde();
 
-  const [messages, setMessages] = useState([{ id: nextId(), role: "assistant", text: "Use Plan first, select a plan, then send that plan to Coder and Reviewer. Forced context files are sent as text to avoid Colab/path access issues." }]);
+  const [messages, setMessages] = useState([{ id: nextId(), role: "assistant", text: "Use Plan for the staged workflow, or Direct to send a request straight to Coder. Every coded result must pass through Reviewer before it becomes a proposal." }]);
   const [draft, setDraft] = useState("");
   const [mode, setMode] = useState("plan");
   const [activeTab, setActiveTab] = useState("chat");
@@ -237,6 +238,7 @@ export default function BobPanel() {
   const [plans, setPlans] = useState([]);
   const [selectedPlanId, setSelectedPlanId] = useState(null);
   const [latestCode, setLatestCode] = useState(null);
+  const [queueState, setQueueState] = useState(null);
   const listRef = useRef(null);
 
   const openPaths = useMemo(() => tabs.map((tab) => tab.path).filter(Boolean), [tabs]);
@@ -267,6 +269,13 @@ export default function BobPanel() {
 
   useEffect(() => { loadConfig(); }, [loadConfig]);
   useEffect(() => { loadPlans(); }, [loadPlans]);
+  useEffect(() => {
+    if (!sending) { setQueueState(null); return undefined; }
+    let active = true;
+    const poll = async () => { try { const status = await api.modelQueueStatus(); if (active) setQueueState(status); } catch {} };
+    poll(); const timer = setInterval(poll, 500);
+    return () => { active = false; clearInterval(timer); };
+  }, [sending]);
   useEffect(() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" }); }, [messages, sending, activeTab]);
 
   useEffect(() => {
@@ -406,6 +415,19 @@ export default function BobPanel() {
     finally { setSending(false); }
   };
 
+  const runDirect = async () => {
+    const prompt = draft.trim();
+    if (!prompt) return pushToast("Describe what the coder should implement", "error");
+    setSending(true); setDraft(""); setActiveTab("chat");
+    setMessages((current) => [...current, { id: nextId(), role: "user", text: prompt, mode: "direct coder + reviewer" }]);
+    try {
+      const result = await api.modelCodeDirect(currentProject, prompt, activePath, forcedPaths, openPaths, config.context_budget, forcedFilesPayload);
+      await loadPlans(); await refreshWorktreeFromJson?.({ forceTree: true }); openSourceControl();
+      setMessages((current) => [...current, { id: nextId(), role: "assistant", kind: "run", run_id: result.run?.run_id, status: result.run?.status || "completed", run: result.run }]);
+    } catch (error) { pushToast(error.message, "error"); }
+    finally { setSending(false); }
+  };
+
   const runAll = async () => {
     const prompt = draft.trim();
     if (!prompt) return;
@@ -413,8 +435,9 @@ export default function BobPanel() {
     setActiveTab("chat");
     setMessages((current) => [...current, { id: nextId(), role: "user", text: prompt, mode: "run all" }]);
     try {
-      const run = await api.modelRunAgent(currentProject, prompt, activePath);
-      setMessages((current) => [...current, { id: nextId(), role: "assistant", kind: "run", run_id: run.run_id, status: "queued", run }]);
+      const result = await api.modelRunAgent(currentProject, prompt, activePath);
+      const run = result.run || result;
+      setMessages((current) => [...current, { id: nextId(), role: "assistant", kind: "run", run_id: run.run_id, status: run.status || "completed", run }]);
       openSourceControl();
     } catch (error) { pushToast(error.message, "error"); }
     finally { setSending(false); }
@@ -434,6 +457,7 @@ export default function BobPanel() {
       finally { setSending(false); }
     } else if (mode === "plan") await runPlan();
     else if (mode === "code") await runCode();
+    else if (mode === "direct") await runDirect();
     else if (mode === "review") await runReview();
     else await runAll();
   };
@@ -476,6 +500,7 @@ export default function BobPanel() {
         <button onClick={() => setActiveTab("plans")}>Plans</button>
         <button onClick={() => setActiveTab("context")}>Context ({forcedPaths.length})</button>
       </div>
+      {sending && queueState && <div className={`bob-queue-state queue-${queueState.status}`}><span>{queueState.status === "queued" ? `Waiting for the shared model${queueState.waiting?.[0]?.position ? ` · position ${queueState.waiting[0].position}` : ""}` : queueState.status === "running" ? "Your request is using the single model lane" : queueState.model_busy ? "The model is finishing another user's request" : "Submitting model request"}</span><small>{queueState.queue_depth || 0} waiting · 1 lane</small></div>}
       <div className="bob-chat-list" ref={listRef}>
         {messages.map((message) => (
           <div key={message.id} className={`bob-msg bob-msg-${message.role}`}>
@@ -488,7 +513,7 @@ export default function BobPanel() {
         {sending && <div className="bob-msg bob-msg-assistant bob-msg-pending"><span className="bob-typing-dot" /><span className="bob-typing-dot" /><span className="bob-typing-dot" /></div>}
       </div>
       <div className="bob-input-row">
-        <textarea className="bob-input" placeholder={mode === "plan" ? "Describe what Bob should plan..." : mode === "code" ? "Send selected plan to coder..." : mode === "review" ? "Review latest coder output..." : "Ask Bob..."} value={draft} rows={3} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
+        <textarea className="bob-input" placeholder={mode === "plan" ? "Describe what Bob should plan..." : mode === "code" ? "Send selected plan to coder..." : mode === "direct" ? "Describe the change for Coder → mandatory Reviewer..." : mode === "review" ? "Review latest coder output..." : "Ask Bob..."} value={draft} rows={3} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} />
         <button className="bob-send-btn" onClick={send} disabled={sending || (!draft.trim() && !["code", "review"].includes(mode))} title="Send"><Send size={16} /></button>
       </div>
     </>

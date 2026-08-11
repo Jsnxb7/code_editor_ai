@@ -104,11 +104,11 @@ sections = [
     ], "Contract tests cover the complete tool catalogue; additional malformed external-model fixtures can deepen field-accuracy measurement."),
 
     ("6. Classification Evaluation", [
-        row("Confusion matrix", "P", "The Bob reviewer is evaluated as a binary PASS/FAIL classifier over 44 labeled cases: TP 17, FN 2, FP 2 and TN 23.", "output/evals/expanded-model-performance-20260806/expanded-metrics.json"),
-        row("Accuracy", "P", "Reviewer accuracy is 90.9% across the complete case timeline."),
-        row("Precision", "P", "FAIL-class precision is 89.5%, measuring how often a predicted defect is real."),
-        row("Recall", "P", "FAIL-class recall is 89.5%, with two genuine defects missed."),
-        row("F1", "P", "FAIL-class F1 is 89.5%; balanced accuracy is 90.7% and MCC is 0.815."),
+        row("Confusion matrix", "P", "The consolidated three-approach evaluation contains 534 scored results: TP 62, FN 164, FP 10 and TN 298.", "output/evals/consolidated/consolidated_verification.json"),
+        row("Accuracy", "P", "Reviewer accuracy is 67.4% across the consolidated approach results."),
+        row("Precision", "P", "FAIL-class precision is 86.1%, measuring how often a predicted defect is real."),
+        row("Recall", "P", "FAIL-class recall is 27.4%, showing that missed defects are the dominant current error mode."),
+        row("F1", "P", "FAIL-class F1 is 41.6%; the complete matrix and reproducible charts are retained in the consolidated evidence."),
         row("Macro average", "N", "The reviewer decision is binary; per-class metrics and balanced accuracy are more directly interpretable."),
         row("Weighted average", "N", "The binary evaluation reports class counts, precision, recall, specificity, F1 and MCC directly."),
     ], "The positive class is FAIL (a defect is present). Python-generated charts, per-case CSV evidence and detailed FP/FN adjudications are included in the evaluation appendix."),
@@ -156,7 +156,7 @@ sections = [
 
     ("11. LLMOps", [
         row("Prompt version", "P", "Every model stage can carry BOB_PROMPT_SET_VERSION and stores the effective version."),
-        row("Dataset version", "P", "Versioned manifests and stable IDs cover 44 reviewer cases plus generated-code and replan checks.", "evals/model_performance_cases.json; evals/reviewer_challenge_cases.json; evals/reviewer_fp_probe_cases.json"),
+        row("Dataset version", "P", "The versioned canonical manifest contains 178 live variants, 74 source requirements, 74 as-is/naturalized pairs and 12 offline cases with stable IDs.", "evals/consolidated_cases.json"),
         row("Model version", "P", "Provider, model ID, model revision and runtime contract version are recorded."),
         row("Evaluation pipeline", "P", "npm test runs software tests, tool contracts, notebook validation, 12 offline evaluations, lint and build."),
         row("A/B testing", "A", "No paired prompt/model comparison or traffic split is implemented."),

@@ -49,10 +49,11 @@ export class WorkspaceWatcher {
   queue(filePath) {
     const relative = path.relative(this.workspaceRoot, filePath);
     if (!relative || relative.startsWith("..")) return;
-    const [project, ...rest] = relative.split(path.sep);
-    if (!project || rest.length === 0) return;
+    const [scope, project, ...rest] = relative.split(path.sep);
+    if (!scope || !project || rest.length === 0 || !scope.includes("--")) return;
+    const projectRef = `${scope}/${project}`;
     const relPath = rest.join("/");
-    const current = this.pending.get(project) || {
+    const current = this.pending.get(projectRef) || {
       paths: new Set(), bob: false, git: false, proposal: false, plans: false, runs: false, timer: null,
     };
     if (relPath.startsWith(".git/")) {
@@ -66,15 +67,16 @@ export class WorkspaceWatcher {
       current.paths.add(relPath);
     }
     clearTimeout(current.timer);
-    current.timer = setTimeout(() => this.flush(project), this.debounceMs);
-    this.pending.set(project, current);
+    current.timer = setTimeout(() => this.flush(projectRef), this.debounceMs);
+    this.pending.set(projectRef, current);
   }
 
-  async flush(project) {
-    const state = this.pending.get(project);
+  async flush(projectRef) {
+    const state = this.pending.get(projectRef);
     if (!state) return;
-    this.pending.delete(project);
-    const room = `workspace:${project}`;
+    this.pending.delete(projectRef);
+    const project = projectRef.split("/").at(-1);
+    const room = `workspace:${projectRef}`;
     const paths = [...state.paths].sort();
     if (paths.length) this.io.to(room).emit("workspace:changed", { project, paths });
     if (state.git || paths.length) this.io.to(room).emit("git:changed", { project });
@@ -84,21 +86,21 @@ export class WorkspaceWatcher {
       this.io.to(room).emit("source-control:changed", { project });
       this.io.to(room).emit("worktree:changed", { project });
     }
-    if (state.runs) await this.emitRunUpdates(project, room);
+    if (state.runs) await this.emitRunUpdates(project, projectRef, room);
   }
 
-  async emitRunUpdates(project, room) {
+  async emitRunUpdates(project, projectRef, room) {
     try {
-      const filePath = path.join(this.workspaceRoot, project, ".bob", "runs.json");
+      const filePath = path.join(this.workspaceRoot, ...projectRef.split("/"), ".bob", "runs.json");
       const parsed = JSON.parse(await fs.readFile(filePath, "utf8"));
       const runs = parsed.runs || [];
       for (const run of runs) {
-        const key = `${project}:${run.run_id || run.id}`;
+        const key = `${projectRef}:${run.run_id || run.id}`;
         const signature = JSON.stringify(run);
         if (this.runStates.get(key) !== signature) {
           this.runStates.set(key, signature);
           this.io.to(room).emit("model:run", { project, ...run });
-          await this.onRunUpdate?.(project, run);
+          await this.onRunUpdate?.(project, projectRef, run);
         }
       }
     } catch {

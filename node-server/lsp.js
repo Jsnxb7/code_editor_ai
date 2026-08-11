@@ -6,8 +6,9 @@ import { safeWorkspacePath } from "./workspace-path.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 class PyrightProcess {
-  constructor({ project, root, namespace }) {
+  constructor({ project, room, root, namespace }) {
     this.project = project;
+    this.room = room;
     this.root = root;
     this.namespace = namespace;
     this.buffer = Buffer.alloc(0);
@@ -53,7 +54,7 @@ class PyrightProcess {
       const body = this.buffer.subarray(bodyStart, bodyStart + length);
       this.buffer = this.buffer.subarray(bodyStart + length);
       try {
-        this.namespace.to(this.project).emit("lsp:message", JSON.parse(body.toString("utf8")));
+        this.namespace.to(this.room).emit("lsp:message", JSON.parse(body.toString("utf8")));
       } catch (error) {
         console.warn(`[pyright:${this.project}] Invalid JSON: ${error.message}`);
       }
@@ -67,11 +68,11 @@ class PyrightProcess {
 }
 
 export class LspManager {
-  constructor({ io, workspaceRoot, authenticate = () => null, authorize = () => true }) {
+  constructor({ io, workspaceRoot, authenticate = () => null, resolveWorkspace = () => { throw new Error("Workspace access denied"); } }) {
     this.namespace = io.of("/lsp");
     this.workspaceRoot = workspaceRoot;
     this.authenticate = authenticate;
-    this.authorize = authorize;
+    this.resolveWorkspace = resolveWorkspace;
     this.processes = new Map();
     this.clients = new Map();
   }
@@ -87,15 +88,18 @@ export class LspManager {
       socket.on("lsp:join", (data = {}) => {
         try {
           const project = String(data.project || "");
-          if (!this.authorize(socket.data.auth.user, project)) throw new Error("Workspace access denied");
-          const root = safeWorkspacePath(this.workspaceRoot, project);
-          socket.join(project);
+          const projectRef = this.resolveWorkspace(socket.data.auth.user, project);
+          const root = safeWorkspacePath(this.workspaceRoot, projectRef);
+          const processKey = projectRef;
+          socket.join(processKey);
           socket.data.project = project;
-          const clients = this.clients.get(project) || new Set();
+          socket.data.projectRef = projectRef;
+          socket.data.processKey = processKey;
+          const clients = this.clients.get(processKey) || new Set();
           clients.add(socket.id);
-          this.clients.set(project, clients);
-          if (!this.processes.has(project)) {
-            this.processes.set(project, new PyrightProcess({ project, root, namespace: this.namespace }));
+          this.clients.set(processKey, clients);
+          if (!this.processes.has(processKey)) {
+            this.processes.set(processKey, new PyrightProcess({ project, room: processKey, root, namespace: this.namespace }));
           }
           socket.emit("lsp:ready", { project });
         } catch (error) {
@@ -103,8 +107,13 @@ export class LspManager {
         }
       });
       socket.on("lsp:message", (data = {}) => {
-        const project = String(data.project || socket.data.project || "");
-        if (project && data.message) this.processes.get(project)?.send(data.message);
+        const project = socket.data.project;
+        const processKey = socket.data.processKey;
+        try {
+          if (project && processKey && this.resolveWorkspace(socket.data.auth.user, project) === socket.data.projectRef && data.message) this.processes.get(processKey)?.send(data.message);
+        } catch (error) {
+          socket.emit("lsp:error", { message: error.message });
+        }
       });
       socket.on("disconnect", () => this.release(socket));
     });
@@ -112,14 +121,14 @@ export class LspManager {
   }
 
   release(socket) {
-    const project = socket.data.project;
-    if (!project) return;
-    const clients = this.clients.get(project);
+    const processKey = socket.data.processKey;
+    if (!processKey) return;
+    const clients = this.clients.get(processKey);
     clients?.delete(socket.id);
     if (!clients?.size) {
-      this.clients.delete(project);
-      this.processes.get(project)?.stop();
-      this.processes.delete(project);
+      this.clients.delete(processKey);
+      this.processes.get(processKey)?.stop();
+      this.processes.delete(processKey);
     }
   }
 

@@ -5,6 +5,7 @@ import sys
 from typing import Dict
 
 from bob_core.file_manager import safe_path
+from bob_core.execution_env import workspace_process_env
 
 RUNNING_PROCESSES = {}
 
@@ -13,7 +14,7 @@ def _safe_key(project: str, rel_path: str) -> str:
     return f"{project}:{rel_path}"
 
 
-def run_python(project: str, rel_path: str, timeout: int = 15) -> Dict:
+def run_python(project: str, rel_path: str, timeout: int = 15, actor_user_id: str | None = None) -> Dict:
     """
     Headless one-shot run of a Python file, capturing stdout/stderr.
 
@@ -37,7 +38,7 @@ def run_python(project: str, rel_path: str, timeout: int = 15) -> Dict:
             "stderr": "",
         }
 
-    env = os.environ.copy()
+    env = workspace_process_env(project, actor_user_id)
     env["PYTHONUNBUFFERED"] = "1"
 
     try:
@@ -79,7 +80,7 @@ def stop_python(project: str, rel_path: str) -> Dict:
     return {"stopped": True, "message": f"Stopped {rel_path}."}
 
 
-def run_pytest(project: str) -> Dict:
+def run_pytest(project: str, actor_user_id: str | None = None) -> Dict:
     root = safe_path(project)
     try:
         result = subprocess.run(
@@ -88,6 +89,7 @@ def run_pytest(project: str) -> Dict:
             capture_output=True,
             text=True,
             timeout=30,
+            env=workspace_process_env(project, actor_user_id),
         )
     except FileNotFoundError:
         return {

@@ -10,8 +10,13 @@ export default function TerminalView({ terminalId, project, active, registerWrit
   const fitRef = useRef(null);
   const readyRef = useRef(false);
   const queueRef = useRef([]);
+  const disposedRef = useRef(false);
+  const frameRef = useRef(null);
 
   useEffect(() => {
+    disposedRef.current = false;
+    readyRef.current = false;
+    queueRef.current = [];
     const term = new Terminal({
       cursorBlink: true,
       convertEol: false,
@@ -42,6 +47,7 @@ export default function TerminalView({ terminalId, project, active, registerWrit
     const socket = getSocket();
 
     const fitAndNotify = () => {
+      if (disposedRef.current || !hostRef.current?.isConnected || hostRef.current.clientWidth < 2 || hostRef.current.clientHeight < 2) return;
       try {
         fitAddon.fit();
         socket.emit("terminal:resize", { terminalId, cols: term.cols, rows: term.rows });
@@ -60,7 +66,7 @@ export default function TerminalView({ terminalId, project, active, registerWrit
       readyRef.current = true;
       queueRef.current.forEach((text) => socket.emit("terminal:input", { terminalId, data: text }));
       queueRef.current = [];
-      requestAnimationFrame(fitAndNotify);
+      frameRef.current = requestAnimationFrame(fitAndNotify);
     };
     const onExit = (payload) => {
       if (payload.terminalId !== terminalId) return;
@@ -93,6 +99,8 @@ export default function TerminalView({ terminalId, project, active, registerWrit
     });
 
     return () => {
+      disposedRef.current = true;
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
       socket.emit("terminal:dispose", { terminalId });
       socket.off("terminal:data", onData);
       socket.off("terminal:ready", onReady);
@@ -101,14 +109,20 @@ export default function TerminalView({ terminalId, project, active, registerWrit
       socket.off("connect", sendCreate);
       disposeInput.dispose();
       term.dispose();
+      termRef.current = null;
+      fitRef.current = null;
+      readyRef.current = false;
+      queueRef.current = [];
       registerWriter(terminalId, null);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [terminalId]);
+  }, [terminalId, project, registerWriter]);
 
   useEffect(() => {
     if (!active || !fitRef.current) return;
-    requestAnimationFrame(() => fitRef.current?.fitAndNotify?.());
+    frameRef.current = requestAnimationFrame(() => {
+      if (!disposedRef.current) fitRef.current?.fitAndNotify?.();
+    });
+    return () => { if (frameRef.current !== null) cancelAnimationFrame(frameRef.current); };
   }, [active, terminalId]);
 
   useEffect(() => {

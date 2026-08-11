@@ -14,6 +14,7 @@ function iso(value = Date.now()) { return new Date(value).toISOString(); }
 function hash(value) { return crypto.createHash("sha256").update(String(value)).digest("hex"); }
 function token() { return crypto.randomBytes(32).toString("base64url"); }
 function normalizeUsername(value) { return String(value || "").trim().toLowerCase(); }
+function userDirectory(user) { return `${normalizeUsername(user?.username)}--${String(user?.id || "")}`; }
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")); }
   catch (error) { if (error.code === "ENOENT") return structuredClone(fallback); throw error; }
@@ -47,6 +48,53 @@ export class AuthStore {
     this.setupPending = false;
   }
 
+  userById(userId) { return this.usersData().users.find((item) => item.id === userId) || null; }
+  userDirectory(user) { if (!user?.id || !user?.username) throw new Error("Invalid workspace owner"); return userDirectory(user); }
+  userRoot(user) { return path.join(this.workspaceRoot, this.userDirectory(user)); }
+  projectRef(user, project) {
+    const name = String(project || "");
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error("Invalid workspace project");
+    return `${this.userDirectory(user)}/${name}`;
+  }
+  publicProject(projectRef) { return String(projectRef || "").split(/[\\/]/).at(-1) || ""; }
+
+  migrateLegacyWorkspaces(defaultOwner = null) {
+    const users = this.usersData().users;
+    const admin = defaultOwner || users.find((item) => item.enabled && item.role === "admin");
+    if (!admin || !fs.existsSync(this.workspaceRoot)) return { moved: [] };
+    const data = this.ownersData();
+    const knownScopes = new Set(users.map((user) => this.userDirectory(user)));
+    const moved = [];
+    for (const item of fs.readdirSync(this.workspaceRoot, { withFileTypes: true })) {
+      if (!item.isDirectory() || knownScopes.has(item.name)) continue;
+      const ownerId = data.owners[item.name] || admin.id;
+      const owner = users.find((user) => user.id === ownerId) || admin;
+      const ref = this.projectRef(owner, item.name);
+      const source = path.join(this.workspaceRoot, item.name);
+      const target = path.join(this.workspaceRoot, ...ref.split("/"));
+      if (fs.existsSync(target)) throw new Error(`Workspace migration target already exists: ${ref}`);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.renameSync(source, target);
+      delete data.owners[item.name];
+      data.owners[ref] = owner.id;
+      moved.push({ project: item.name, project_ref: ref, owner_user_id: owner.id });
+    }
+    for (const [key, ownerId] of Object.entries({ ...data.owners })) {
+      if (key.includes("/") || key.includes("\\")) continue;
+      const owner = users.find((user) => user.id === ownerId);
+      if (!owner) continue;
+      const ref = this.projectRef(owner, key);
+      if (fs.existsSync(path.join(this.workspaceRoot, ...ref.split("/")))) {
+        delete data.owners[key];
+        data.owners[ref] = owner.id;
+      }
+    }
+    data.schema_version = "2.0";
+    writeJson(this.ownersPath, data);
+    if (moved.length) this.audit?.("workspace.layout_migrated", { actor_user_id: admin.id, moved });
+    return { moved };
+  }
+
   usersData() { return readJson(this.usersPath, { schema_version: SCHEMA_VERSION, users: [] }); }
   sessionsData() { return readJson(this.sessionsPath, { schema_version: SCHEMA_VERSION, sessions: [] }); }
   ownersData() { return readJson(this.ownersPath, { schema_version: SCHEMA_VERSION, owners: {} }); }
@@ -73,12 +121,8 @@ export class AuthStore {
       const user = { id: crypto.randomUUID(), username, display_name: String(payload.display_name).trim(), role: "admin", password_hash: passwordHash, enabled: true, created_at: now, updated_at: now };
       data.users.push(user);
       writeJson(this.usersPath, data);
-      const owners = this.ownersData();
-      if (fs.existsSync(this.workspaceRoot)) {
-        for (const item of fs.readdirSync(this.workspaceRoot, { withFileTypes: true })) if (item.isDirectory() && !owners.owners[item.name]) owners.owners[item.name] = user.id;
-      }
-      writeJson(this.ownersPath, owners);
-      this.audit?.("auth.setup", { actor_user_id: user.id, assigned_workspaces: Object.keys(owners.owners), ...requestMeta });
+      const migration = this.migrateLegacyWorkspaces(user);
+      this.audit?.("auth.setup", { actor_user_id: user.id, assigned_workspaces: migration.moved.map((item) => item.project), ...requestMeta });
       return { user: publicUser(user), ...this.createSession(user, requestMeta) };
     } finally { this.setupPending = false; }
   }
@@ -162,7 +206,7 @@ export class AuthStore {
     if (data.users.some((item) => item.username === username)) throw Object.assign(new Error("Username already exists"), { status: 409 });
     const now = iso(); const role = payload.role === "admin" ? "admin" : "user";
     const user = { id: crypto.randomUUID(), username, display_name: String(payload.display_name).trim(), role, password_hash: await bcrypt.hash(String(payload.password), 12), enabled: true, created_at: now, updated_at: now };
-    data.users.push(user); writeJson(this.usersPath, data); this.audit?.("user.created", { actor_user_id: actor.id, target_user_id: user.id, role }); return publicUser(user);
+    data.users.push(user); writeJson(this.usersPath, data); fs.mkdirSync(this.userRoot(user), { recursive: true }); this.audit?.("user.created", { actor_user_id: actor.id, target_user_id: user.id, role, workspace_directory: this.userDirectory(user) }); return publicUser(user);
   }
 
   async updateUser(userId, payload, actor) {
@@ -178,9 +222,23 @@ export class AuthStore {
     this.audit?.("user.updated", { actor_user_id: actor.id, target_user_id: user.id, fields: Object.keys(payload) }); return publicUser(user);
   }
 
-  ownerOf(project) { return this.ownersData().owners[String(project)] || null; }
-  canAccess(user, project) { return Boolean(user && project && this.ownerOf(project) === user.id); }
-  assignOwner(project, userId, actor) { const data = this.ownersData(); data.owners[String(project)] = userId; writeJson(this.ownersPath, data); this.audit?.("workspace.owner_assigned", { actor_user_id: actor?.id || userId, target_user_id: userId, project }); }
+  ownerOf(project, user = null) { const key = user ? this.projectRef(user, project) : String(project); return this.ownersData().owners[key] || null; }
+  canAccess(user, project) { return Boolean(user && project && this.ownerOf(project, user) === user.id); }
+  assignOwner(project, userId, actor) {
+    const owner = this.userById(userId); if (!owner) throw new Error("Workspace owner not found");
+    const ref = this.projectRef(owner, project); const data = this.ownersData();
+    const previousRef = Object.keys(data.owners).find((key) => this.publicProject(key) === String(project) && data.owners[key] !== userId);
+    if (previousRef && previousRef !== ref) {
+      const source = path.join(this.workspaceRoot, ...previousRef.split(/[\\/]/));
+      const target = path.join(this.workspaceRoot, ...ref.split("/"));
+      if (fs.existsSync(source) && !fs.existsSync(target)) {
+        fs.mkdirSync(path.dirname(target), { recursive: true }); fs.renameSync(source, target);
+        delete data.owners[previousRef];
+      }
+    }
+    data.owners[ref] = userId; delete data.owners[String(project)]; writeJson(this.ownersPath, data);
+    this.audit?.("workspace.owner_assigned", { actor_user_id: actor?.id || userId, target_user_id: userId, project, project_ref: ref, previous_project_ref: previousRef || null });
+  }
   projectsFor(user, projects) { return projects.filter((project) => this.canAccess(user, project)); }
 
   issueApproval(user, { operation, project, target, reason }) {

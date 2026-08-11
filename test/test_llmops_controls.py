@@ -78,6 +78,22 @@ class LlmOpsControlTests(unittest.TestCase):
         self.assertEqual(0.002, result["estimated_cost_usd"])
         self.assertEqual("test-model", result["model"])
 
+    def test_transport_writes_redacted_request_and_response_events(self):
+        adapter = self.adapter()
+        with patch("bob_core.colab_adapter.log_tunnel") as logger, patch(
+            "bob_core.colab_adapter.urllib.request.urlopen",
+            return_value=FakeResponse({"reply": "ok"}),
+        ):
+            adapter.chat({"run_id": "run-1", "trace_id": "trace-1", "request_id": "request-1", "evaluation_run_id": "eval-1", "test_id": "case-1", "test_name": "Natural login request", "prompt_category": "new_user_natural", "pair_id": None, "approach": "direct_coder_model_reviewer", "pipeline_id": "eval-1:case-1:direct", "model_lane": 2, "message": "private"})
+        self.assertEqual(["tunnel.request", "tunnel.response"], [call.args[0] for call in logger.call_args_list])
+        self.assertEqual("request-1", logger.call_args_list[0].kwargs["request_id"])
+        self.assertEqual("eval-1", logger.call_args_list[0].kwargs["evaluation_run_id"])
+        self.assertEqual("case-1", logger.call_args_list[1].kwargs["test_id"])
+        self.assertEqual("direct_coder_model_reviewer", logger.call_args_list[1].kwargs["approach"])
+        self.assertEqual("eval-1:case-1:direct", logger.call_args_list[1].kwargs["pipeline_id"])
+        self.assertEqual(2, logger.call_args_list[1].kwargs["model_lane"])
+        self.assertNotIn("private", json.dumps(logger.call_args_list[0].kwargs))
+
     def test_contracts_validate_status_and_confidence(self):
         self.assertEqual("PASS", ReviewContract(review="ok", final_status="pass").final_status)
         with self.assertRaises(ValidationError):
