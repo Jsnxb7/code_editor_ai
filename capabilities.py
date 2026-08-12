@@ -171,7 +171,13 @@ def workspace_list(scope: str | None = None) -> dict:
     if normalized_scope:
         user_root = WORKSPACE_DIR / normalized_scope
         user_root.mkdir(parents=True, exist_ok=True)
-        return {"projects": sorted(item.name for item in user_root.iterdir() if item.is_dir())}
+        return {
+            "projects": sorted(
+                item.name
+                for item in user_root.iterdir()
+                if item.is_dir() and re.fullmatch(r"[A-Za-z0-9_-]+", item.name)
+            )
+        }
     return {"projects": list_projects()}
 
 

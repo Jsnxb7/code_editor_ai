@@ -16,6 +16,7 @@ import {
   Save,
   Send,
   Settings2,
+  ShieldAlert,
   Sparkles,
   X,
   XCircle,
@@ -492,6 +493,10 @@ export default function BobPanel() {
 
   const renderChat = () => (
     <>
+      <div className="bob-access-notice" role="status">
+        <ShieldAlert size={15} />
+        <span>If chat shows a connection or access error, contact the owner to enable the chat feature.</span>
+      </div>
       <div className="bob-mode-control bob-stage-strip">
         {STAGE_MODES.map(({ id, label, icon: Icon }) => <button key={id} className={mode === id ? "active" : ""} onClick={() => setMode(id)}><Icon size={14} /> {label}</button>)}
       </div>

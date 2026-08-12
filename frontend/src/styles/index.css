@@ -708,6 +708,21 @@ body.resizing-y { cursor: row-resize; }
   flex-direction: column;
   gap: 10px;
 }
+.bob-access-notice {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0 10px 8px;
+  padding: 8px 9px;
+  border: 1px solid rgba(245, 200, 66, .32);
+  border-radius: var(--radius);
+  background: rgba(245, 200, 66, .09);
+  color: #e6d7a6;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.bob-access-notice svg { flex: 0 0 auto; margin-top: 1px; color: var(--yellow); }
 
 .bob-msg { display: flex; flex-direction: column; gap: 3px; max-width: 100%; }
 .bob-msg-role {
@@ -2202,6 +2217,7 @@ body.resizing-y { cursor: row-resize; }
 .auth-card { align-self: center; margin: 32px clamp(28px, 6vw, 96px) 32px 0; padding: 36px; background: #f7f9fc; color: #182433; border-radius: 18px; box-shadow: 0 28px 90px #0008; }.auth-card small { color: #617284; font-weight: 700; letter-spacing: .07em; }.auth-card h2 { margin: 7px 0 24px; font-size: 27px; }
 .auth-card form { display: grid; gap: 16px; }.auth-card label { display: grid; gap: 7px; font-size: 12px; font-weight: 750; color: #334457; }.auth-card input { height: 43px; border: 1px solid #cad4df; border-radius: 8px; background: #fff; color: #152333; padding: 0 12px; outline: none; }.auth-card input:focus { border-color: #1c6e8c; box-shadow: 0 0 0 3px #1c6e8c22; }
 .auth-submit { min-height: 45px; border-radius: 8px; background: #163c57; color: #fff; font-weight: 800; margin-top: 4px; }.auth-submit:hover:not(:disabled) { background: #1d5878; }.auth-error { background: #fff0f0; color: #9e2f35; border: 1px solid #eac2c5; padding: 10px; border-radius: 7px; font-size: 12px; }.auth-footnote { display: block; margin-top: 18px; text-align: center; }
+.auth-owner-notice { display: flex; align-items: flex-start; gap: 9px; margin: -8px 0 18px; padding: 11px 12px; border: 1px solid #c9dbe6; border-radius: 8px; background: #edf6fb; color: #25465c; font-size: 12.5px; line-height: 1.45; }.auth-owner-notice svg { flex: 0 0 auto; margin-top: 1px; color: #1c6e8c; }
 
 /* Profile menu */
 .profile-menu-wrap { position: relative; }.profile-trigger { height: 32px; display: flex; align-items: center; gap: 7px; padding: 2px 7px 2px 3px; border-radius: 7px; }.profile-trigger:hover { background: var(--surface-3); }.profile-trigger > span:last-child { display: grid; text-align: left; line-height: 1.05; }.profile-trigger strong { font-size: 11px; color: var(--text); }.profile-trigger small { font-size: 9px; text-transform: uppercase; color: var(--text-3); }

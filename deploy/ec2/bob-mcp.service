@@ -1,0 +1,23 @@
+[Unit]
+Description=Bob IDE Python MCP server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=bob
+Group=bob
+WorkingDirectory=/opt/bob-ide
+EnvironmentFile=/etc/bob-ide.env
+ExecStart=/opt/bob-ide/.venv/bin/python /opt/bob-ide/mcp_server.py --transport streamable-http --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

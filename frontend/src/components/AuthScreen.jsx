@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ShieldCheck } from "lucide-react";
+import { KeyRound, ShieldCheck } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 
 export default function AuthScreen() {
@@ -22,6 +22,7 @@ export default function AuthScreen() {
       </section>
       <section className="auth-card">
         <div><small>{isSetup ? "FIRST-RUN SETUP" : "WELCOME BACK"}</small><h2>{isSetup ? "Create administrator" : "Sign in"}</h2></div>
+        {!isSetup && <div className="auth-owner-notice"><KeyRound size={17} /><span>Need login credentials? Contact the owner of this server for access.</span></div>}
         <form onSubmit={submit}>
           {isSetup && <label>Display name<input autoFocus value={form.display_name} onChange={(e) => setForm((v) => ({ ...v, display_name: e.target.value }))} minLength={2} required /></label>}
           <label>Username<input autoFocus={!isSetup} value={form.username} onChange={(e) => setForm((v) => ({ ...v, username: e.target.value }))} autoComplete="username" minLength={3} required /></label>

@@ -163,7 +163,7 @@ py --version
 
 ## 2. Install Node.js
 
-Install Node.js LTS from the official Node.js website.
+Install Node.js 22.12 or newer (an LTS release is recommended) from the official Node.js website. Node.js 20 users need version 20.19 or newer for the current Vite toolchain.
 
 Check Node and npm:
 
@@ -182,7 +182,20 @@ Check Git:
 git --version
 ```
 
-## 4. Install Visual Studio Build Tools if needed
+## 4. Install Docker Desktop
+
+Docker is required for the integrated terminal. Install Docker Desktop, use Linux containers, and start Docker Desktop before starting Bob IDE. On Windows, enable the WSL 2 backend when prompted.
+
+Check Docker:
+
+```powershell
+docker version
+docker info
+```
+
+Both commands must succeed. If `docker info` cannot contact the daemon, start Docker Desktop and wait until it reports that the engine is running.
+
+## 5. Install Visual Studio Build Tools if needed
 
 The root Node server uses `node-pty` for the integrated terminal. On Windows, `node-pty` may need build tools.
 
@@ -278,6 +291,28 @@ cmd /c npm install
 cmd /c npm --prefix frontend install
 ```
 
+## Build the required terminal sandbox image
+
+Bob IDE does not allow host-shell terminals. Build the bundled Linux sandbox image from the project root:
+
+```powershell
+docker build -t bob-terminal:latest -f node-server/terminal.Dockerfile .
+```
+
+Verify that the image exists:
+
+```powershell
+docker image inspect bob-terminal:latest
+```
+
+Before starting the Node gateway, set the image name in every PowerShell session that will launch it:
+
+```powershell
+$env:BOB_TERMINAL_SANDBOX_IMAGE="bob-terminal:latest"
+```
+
+This setting is mandatory for the integrated terminal. Rebuild the image after changing `node-server/terminal.Dockerfile`.
+
 ---
 
 # Part 5: Run the app in development mode
@@ -295,6 +330,7 @@ React dev server
 From the project root:
 
 ```powershell
+$env:BOB_TERMINAL_SANDBOX_IMAGE="bob-terminal:latest"
 npm run dev
 ```
 
@@ -324,6 +360,7 @@ http://127.0.0.1:8001/mcp
 ### Terminal 2: Node gateway
 
 ```powershell
+$env:BOB_TERMINAL_SANDBOX_IMAGE="bob-terminal:latest"
 npm run dev:node
 ```
 
@@ -370,6 +407,7 @@ npm run dev:python
 In a second terminal, start Node production server:
 
 ```powershell
+$env:BOB_TERMINAL_SANDBOX_IMAGE="bob-terminal:latest"
 npm start
 ```
 
@@ -419,7 +457,7 @@ Frontend production build
 
 Use this Colab notebook:
 
-[Open the Bob IDE Colab notebook](https://colab.research.google.com/drive/1Uddwha_w4uxxFPWDO4SopG0b8NiiOJyo?usp=sharing)
+[Open the Bob IDE Colab notebook](https://colab.research.google.com/drive/1GcPEGHqUL0cK82jWyZKNU5CH6iLQWn9g?usp=sharing)
 
 Open the notebook in Google Colab.
 
@@ -862,6 +900,7 @@ If Git is not initialized, some source-control features may be limited.
 ## Start everything for development
 
 ```powershell
+$env:BOB_TERMINAL_SANDBOX_IMAGE="bob-terminal:latest"
 npm run dev
 ```
 
@@ -874,6 +913,7 @@ npm run dev:python
 ## Start only Node gateway
 
 ```powershell
+$env:BOB_TERMINAL_SANDBOX_IMAGE="bob-terminal:latest"
 npm run dev:node
 ```
 
@@ -892,6 +932,7 @@ npm run build
 ## Start production server
 
 ```powershell
+$env:BOB_TERMINAL_SANDBOX_IMAGE="bob-terminal:latest"
 npm start
 ```
 
@@ -940,6 +981,22 @@ Install Visual Studio Build Tools with C++ desktop workload, then run:
 ```powershell
 npm install
 ```
+
+## Integrated terminal says the sandbox image is not configured
+
+Make sure Docker Desktop is running, build the image, and set the environment variable in the same PowerShell session that starts Node:
+
+```powershell
+docker build -t bob-terminal:latest -f node-server/terminal.Dockerfile .
+$env:BOB_TERMINAL_SANDBOX_IMAGE="bob-terminal:latest"
+npm run dev
+```
+
+If the image is already built, confirm its exact name with `docker image ls` and use that value for `BOB_TERMINAL_SANDBOX_IMAGE`.
+
+## Docker cannot mount the workspace
+
+Confirm Docker Desktop is using Linux containers and that its WSL 2 engine is running. If Docker Desktop asks for file-sharing permission for the project drive, grant access and restart Bob IDE.
 
 ## React opens but API calls fail
 
@@ -1058,19 +1115,21 @@ For Colab, paste tokens into notebook runtime cells only.
 Use this order:
 
 ```text
-1. Open Colab notebook.
-2. Set runtime to GPU.
-3. Run setup/model cells.
-4. Set Hugging Face token if needed.
-5. Set ngrok token.
-6. Start Colab HTTP server.
-7. Copy ngrok URL.
-8. Start local Bob IDE with npm run dev.
-9. Open http://127.0.0.1:5173.
-10. Paste ngrok URL into Bob Config.
-11. Save config.
-12. Test health.
-13. Start planning/coding/reviewing.
+1. Start Docker Desktop and confirm docker info succeeds.
+2. Build bob-terminal:latest if it is missing or the Dockerfile changed.
+3. Open the Colab notebook.
+4. Set the runtime to GPU.
+5. Run the setup/model cells.
+6. Set the Hugging Face token if needed.
+7. Set the ngrok token.
+8. Start the Colab HTTP server.
+9. Copy the ngrok URL.
+10. Set BOB_TERMINAL_SANDBOX_IMAGE=bob-terminal:latest in PowerShell.
+11. Start local Bob IDE with npm run dev.
+12. Open http://127.0.0.1:5173.
+13. On first launch, create the administrator account.
+14. Paste the ngrok URL into Bob Config and save it.
+15. Test health, then start planning/coding/reviewing.
 ```
 
 ---

@@ -1,6 +1,9 @@
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
-from capabilities import CAPABILITIES, invoke
+from capabilities import CAPABILITIES, invoke, workspace_list
 from bob_core.file_manager import safe_path
 
 
@@ -99,6 +102,21 @@ class CapabilityRegistryTests(unittest.TestCase):
     def test_project_cannot_escape_workspace_root(self):
         with self.assertRaisesRegex(ValueError, "Invalid workspace"):
             safe_path("..")
+
+    def test_scoped_workspace_list_ignores_internal_directories(self):
+        scope = "worker--00000000-0000-0000-0000-000000000001"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workspace_root = Path(temporary_directory)
+            user_root = workspace_root / scope
+            (user_root / ".bob" / "runtime").mkdir(parents=True)
+            (user_root / "valid_project").mkdir()
+            (user_root / "invalid.project").mkdir()
+
+            with patch("capabilities.WORKSPACE_DIR", workspace_root):
+                self.assertEqual(
+                    {"projects": ["valid_project"]},
+                    workspace_list(scope),
+                )
 
 
 if __name__ == "__main__":

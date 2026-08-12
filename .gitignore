@@ -24,3 +24,9 @@ docs/*
 !docs/GIT_COLAB_INTEGRATION_PLAN.md
 !docs/NODE_MCP_REACT_MIGRATION.md
 *.zip
+
+# SSH / cloud private keys
+*.pem
+*.key
+id_rsa
+id_ed25519
