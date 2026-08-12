@@ -641,8 +641,9 @@ Code path:         /code
 Review path:       /review
 Run path:          /run-agent
 Stream path:       /run-agent/stream
-Bearer token:      leave empty unless you set BOB_COLAB_TOKEN
 ```
+
+The bearer token is not stored in Bob Config. The Config tab shows whether `BOB_COLAB_TOKEN` was present in the environment when the Python MCP service started. Follow Part 14 if it shows `not configured`.
 
 Click:
 
@@ -660,21 +661,29 @@ If the test succeeds, Bob IDE can reach Colab.
 
 ---
 
-# Part 14: Optional bearer token between Bob IDE and Colab
+# Part 14: Set the Bob bearer token in Colab and Bob IDE
 
-If you want Colab to require a token, set this in the notebook before starting the server:
+`BOB_COLAB_TOKEN` is required when the notebook exposes the runtime publicly. Use one long, random token on both sides. Do not paste the token into a notebook source cell, Bob Config, or a tracked file.
 
-```python
-BOB_COLAB_TOKEN = "my-secret-token"
+## 1. Set the token in Colab
+
+Before starting Phase 15, run the notebook's authentication-token setup cell. Enter your token at the hidden `Bob API bearer token` prompt. If your notebook environment supports environment secrets, you can instead store it there as `BOB_COLAB_TOKEN`; the setup cell will use the stored value when you press Enter.
+
+The notebook must have `BOB_COLAB_TOKEN` in its environment before `start_colab_http_server(...)` exposes the ngrok URL.
+
+## 2. Set the identical token locally
+
+In the PowerShell session used to start Bob IDE, set the same value before running the services:
+
+```powershell
+$env:BOB_COLAB_TOKEN="paste_the_same_random_token_here"
+$env:BOB_TERMINAL_SANDBOX_IMAGE="bob-terminal:latest"
+npm run dev
 ```
 
-Then in Bob Chat Config, set:
+If you start the three services separately, set `BOB_COLAB_TOKEN` in the PowerShell session that starts `npm run dev:python`. Restart the Python MCP service after changing the token.
 
-```text
-Bearer token: my-secret-token
-```
-
-If you leave `BOB_COLAB_TOKEN` empty, leave Bearer token empty in the app.
+The token values must match exactly. Bob sends it as the `Authorization: Bearer ...` header, but neither Bob Config nor runtime logs persist or display the secret.
 
 ---
 
@@ -1104,9 +1113,9 @@ paste_your_huggingface_token_here
 paste_your_ngrok_token_here
 ```
 
-For local app config, use the Bob Config tab or local environment variables.
+Use the Bob Config tab for non-secret local settings. Set `BOB_COLAB_TOKEN` only through a local environment variable before starting the Python MCP service.
 
-For Colab, paste tokens into notebook runtime cells only.
+For Colab, use the notebook's hidden token prompts or environment-secret storage. Do not paste tokens into notebook source cells.
 
 ---
 
@@ -1121,15 +1130,15 @@ Use this order:
 4. Set the runtime to GPU.
 5. Run the setup/model cells.
 6. Set the Hugging Face token if needed.
-7. Set the ngrok token.
+7. Enter the ngrok token and a random BOB_COLAB_TOKEN at the notebook's hidden prompts.
 8. Start the Colab HTTP server.
 9. Copy the ngrok URL.
-10. Set BOB_TERMINAL_SANDBOX_IMAGE=bob-terminal:latest in PowerShell.
+10. Set the identical BOB_COLAB_TOKEN and BOB_TERMINAL_SANDBOX_IMAGE=bob-terminal:latest in PowerShell.
 11. Start local Bob IDE with npm run dev.
 12. Open http://127.0.0.1:5173.
 13. On first launch, create the administrator account.
 14. Paste the ngrok URL into Bob Config and save it.
-15. Test health, then start planning/coding/reviewing.
+15. Confirm the token status is configured, test health, then start planning/coding/reviewing.
 ```
 
 ---
